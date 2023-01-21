@@ -1,0 +1,72 @@
+---
+description: Attach policies to an IAM role
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  RoleName:
+    type: String
+    description: (Required) The name of the IAM role to attach policies to.
+  AWSManagedPolicies:
+    type: StringList
+    description: (Optional) A list of AWS managed policies to attach to the role.
+  CustomerManagedPolicies:
+    type: StringList
+    minItems: 0
+    default: []
+    description: (Optional) A list of customer managed policies to attach to the role.
+  AutomationAssumeRole:
+    type: String
+    default: ""
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+---
+description: Attach policies to an IAM role
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  RoleName:
+    type: String
+    description: (Required) The name of the IAM role to attach policies to.
+  AWSManagedPolicies:
+    type: StringList
+    description: (Optional) A list of AWS managed policies to attach to the role.
+  CustomerManagedPolicies:
+    type: StringList
+    minItems: 0
+    default: []
+    description: (Optional) A list of customer managed policies to attach to the role.
+  AutomationAssumeRole:
+    type: String
+    default: ""
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+mainSteps:
+- name: attachPolicy
+  action: 'aws:executeScript'
+  inputs:
+    Runtime: python3.7
+    Handler: script_handler
+    Script: |-
+      import boto3
+      iam = boto3.client("iam")
+      def attach_policy(policy, policy_type):
+        role_name = inputPayload["RoleName"]
+        if policy_type == "AWS":
+          policy_arn = f"arn:aws:iam::aws:policy/{policy}"
+        else:
+          policy_arn = policy
+        try:
+          iam.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+          print(f"{policy} policy attached to {role_name} role")
+        except iam.exceptions.EntityAlreadyExistsException:
+          print(f"{policy} policy is already attached to {role_name} role")
+      
+      def script_handler(inputPayload, context):
+        aws_policy_names = inputPayload["AWSManagedPolicies"]
+        customer_policy_names = inputPayload["CustomerManagedPolicies"]
+        for policy in aws_policy_names:
+          attach_policy(policy, "AWS")
+        for policy in customer_policy_names:
+          attach_policy(policy, "Customer")
+    InputPayload:
+      RoleName: '{{ RoleName }}'
+      AWSManagedPolicies: '{{ AWSManagedPolicies }}'
+      CustomerManagedPolicies: '{{ CustomerManagedPolicies }}'
