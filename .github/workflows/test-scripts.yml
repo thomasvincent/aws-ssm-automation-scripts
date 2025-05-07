@@ -1,0 +1,59 @@
+name: Test SSM Scripts
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.yaml'
+      - '**.yml'
+      - '!.github/**'
+
+jobs:
+  test-scripts:
+    name: Test Scripts in Sandbox
+    runs-on: ubuntu-latest
+    # Only run this job if explicitly approved in the PR comments
+    if: contains(github.event.pull_request.labels.*.name, 'safe-to-test')
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.SANDBOX_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SANDBOX_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          role-to-assume: ${{ secrets.SANDBOX_ROLE_ARN }}
+          role-duration-seconds: 1800
+          
+      - name: Install AWS CLI
+        run: |
+          pip install awscli
+          
+      - name: Register and test SSM documents
+        run: |
+          # For each YAML file in the repository
+          for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v "^\.\/\.github"); do
+            echo "Processing $file..."
+            file_basename=$(basename "$file")
+            document_name="Test-$(echo $file_basename | sed 's/\.yaml$\|\.yml$//')-${{ github.run_id }}"
+            
+            # Register document in SSM
+            echo "Registering document $document_name..."
+            aws ssm create-document \
+              --name "$document_name" \
+              --document-type "Automation" \
+              --content file://$file
+              
+            # Document successfully registered
+            echo "Document $document_name registered successfully!"
+            
+            # Clean up after tests
+            echo "Cleaning up document $document_name..."
+            aws ssm delete-document --name "$document_name"
+          done
