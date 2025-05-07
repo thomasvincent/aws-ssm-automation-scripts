@@ -1,0 +1,26 @@
+# Default owners for the entire repository
+* @thomasvincent
+
+# IAM related scripts
+**/attach_policies_to_role.yaml @thomasvincent
+
+# S3 related scripts
+**/s3_encryption.yaml @thomasvincent
+
+# EC2 related scripts
+**/ec2_instance_patching.yaml @thomasvincent
+
+# Security related scripts
+**/security_group_audit.yaml @thomasvincent
+
+# Resource management scripts
+**/create_and_tag_resources.yaml @thomasvincent
+
+# Maintenance window scripts
+**/maintenance_window_setup.yaml @thomasvincent
+
+# GitHub Actions workflow files
+.github/workflows/* @thomasvincent
+
+# Documentation files
+*.md @thomasvincent
