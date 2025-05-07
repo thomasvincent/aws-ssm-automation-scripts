@@ -21,11 +21,15 @@ parameters:
     description: (Required) The name of the Lambda function.
   S3Bucket:
     type: String
-    description: (Optional) S3 bucket containing the Lambda deployment package. Required for Create and Update operations.
+    description: >-
+      (Optional) S3 bucket containing the Lambda deployment package. 
+      Required for Create and Update operations.
     default: ""
   S3Key:
     type: String
-    description: (Optional) S3 key for the Lambda deployment package. Required for Create and Update operations.
+    description: >-
+      (Optional) S3 key for the Lambda deployment package.
+      Required for Create and Update operations.
     default: ""
   Handler:
     type: String

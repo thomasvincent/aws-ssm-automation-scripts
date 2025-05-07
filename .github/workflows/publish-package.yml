@@ -33,7 +33,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pyyaml
+          pip install pyyaml yamllint
 
       - name: Validate SSM documents
         run: npm run lint

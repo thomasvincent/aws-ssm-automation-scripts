@@ -2,7 +2,9 @@
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
-description: Manages AWS CloudFront distributions, including creation, update, invalidation and security configuration
+description: >-
+  Manages AWS CloudFront distributions, including creation, update, invalidation 
+  and security configuration
 schemaVersion: '0.3'
 assumeRole: '{{ AutomationAssumeRole }}'
 parameters:
@@ -19,7 +21,9 @@ parameters:
       - GetDistributionConfig
   DistributionId:
     type: String
-    description: (Optional) The ID of an existing CloudFront distribution. Required for all operations except Create.
+    description: >-
+      (Optional) The ID of an existing CloudFront distribution. 
+      Required for all operations except Create.
     default: ""
   OriginDomainName:
     type: String
