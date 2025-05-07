@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
@@ -16,7 +17,7 @@ parameters:
       - RebootIfNeeded
       - NoReboot
   PatchSeverity:
-    type: String 
+    type: String
     description: (Optional) The severity level of patches to apply.
     default: Critical,Important
     allowedValues:
@@ -38,33 +39,33 @@ mainSteps:
       Handler: check_instances
       Script: |-
         import boto3
-        
+
         def check_instances(events, context):
             """
             Verify that all instances are running before attempting to patch.
-            
+
             Args:
                 events (dict): Input parameters
                 context: Lambda context (not used)
-                
+
             Returns:
                 dict: Results of instance verification
             """
             ec2 = boto3.client('ec2')
             instance_ids = events['InstanceIds']
-            
+
             response = ec2.describe_instances(
                 InstanceIds=instance_ids
             )
-            
+
             verified_instances = []
             unverified_instances = []
-            
+
             for reservation in response['Reservations']:
                 for instance in reservation['Instances']:
                     instance_id = instance['InstanceId']
                     state = instance['State']['Name']
-                    
+
                     if state == 'running':
                         verified_instances.append(instance_id)
                     else:
@@ -72,7 +73,7 @@ mainSteps:
                             'InstanceId': instance_id,
                             'CurrentState': state
                         })
-            
+
             return {
                 'VerifiedInstances': verified_instances,
                 'UnverifiedInstances': unverified_instances
@@ -86,7 +87,7 @@ mainSteps:
       - Name: UnverifiedInstances
         Selector: $.Payload.UnverifiedInstances
         Type: StringMap
-  
+
   - name: PatchInstances
     action: aws:runCommand
     onFailure: Continue
@@ -97,7 +98,7 @@ mainSteps:
         Operation: Install
         RebootOption: "{{ RebootOption }}"
         PatchSeverity: "{{ PatchSeverity }}"
-      
+
   - name: VerifyPatching
     action: aws:executeScript
     inputs:
@@ -107,42 +108,42 @@ mainSteps:
         import boto3
         import json
         from datetime import datetime, timezone
-        
+
         def verify_patching(events, context):
             """
             Verify that instances have been successfully patched.
-            
+
             Args:
                 events (dict): Input parameters
                 context: Lambda context (not used)
-                
+
             Returns:
                 dict: Patching verification results
             """
             ssm = boto3.client('ssm')
             instance_ids = events['InstanceIds']
-            
+
             results = {
                 'PatchedInstances': [],
                 'FailedInstances': [],
                 'SummaryReport': {}
             }
-            
+
             current_time = datetime.now(timezone.utc)
-            
+
             for instance_id in instance_ids:
                 try:
                     response = ssm.describe_instance_patches(
                         InstanceId=instance_id
                     )
-                    
+
                     patch_states = {}
                     for patch in response['Patches']:
                         state = patch.get('State', 'Unknown')
                         if state not in patch_states:
                             patch_states[state] = 0
                         patch_states[state] += 1
-                    
+
                     # Check if any patches are missing or failed
                     if patch_states.get('Missing', 0) > 0 or patch_states.get('Failed', 0) > 0:
                         results['FailedInstances'].append({
@@ -154,20 +155,20 @@ mainSteps:
                             'InstanceId': instance_id,
                             'PatchStates': patch_states
                         })
-                        
+
                 except Exception as e:
                     results['FailedInstances'].append({
                         'InstanceId': instance_id,
                         'Error': str(e)
                     })
-            
+
             results['SummaryReport'] = {
                 'TotalInstances': len(instance_ids),
                 'SuccessfullyPatched': len(results['PatchedInstances']),
                 'FailedPatching': len(results['FailedInstances']),
                 'CompletionTime': current_time.isoformat()
             }
-            
+
             return results
       InputPayload:
         InstanceIds: "{{ VerifyInstancesRunning.VerifiedInstances }}"

@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
@@ -30,15 +31,15 @@ mainSteps:
     Script: |-
       import boto3
       from botocore.exceptions import ClientError
-      
+
       def script_handler(events, context):
           """
           Attaches AWS managed and customer managed policies to an IAM role.
-          
+
           Args:
               events (dict): Input parameters including RoleName, AWSManagedPolicies, and CustomerManagedPolicies
               context: Lambda context (not used)
-              
+
           Returns:
               dict: Results of the operation including success/failure status
           """
@@ -46,13 +47,13 @@ mainSteps:
           role_name = events["RoleName"]
           aws_policy_names = events["AWSManagedPolicies"]
           customer_policy_names = events["CustomerManagedPolicies"]
-          
+
           results = {
               "RoleName": role_name,
               "AttachedPolicies": [],
               "FailedPolicies": []
           }
-          
+
           # Attach AWS managed policies
           for policy in aws_policy_names:
               try:
@@ -61,11 +62,11 @@ mainSteps:
                   results["AttachedPolicies"].append({"Name": policy, "Type": "AWS", "Arn": policy_arn})
               except ClientError as e:
                   results["FailedPolicies"].append({
-                      "Name": policy, 
-                      "Type": "AWS", 
+                      "Name": policy,
+                      "Type": "AWS",
                       "Error": str(e)
                   })
-          
+
           # Attach customer managed policies
           for policy_arn in customer_policy_names:
               try:
@@ -74,11 +75,11 @@ mainSteps:
                   results["AttachedPolicies"].append({"Name": policy_name, "Type": "Customer", "Arn": policy_arn})
               except ClientError as e:
                   results["FailedPolicies"].append({
-                      "Name": policy_arn, 
-                      "Type": "Customer", 
+                      "Name": policy_arn,
+                      "Type": "Customer",
                       "Error": str(e)
                   })
-          
+
           return results
     InputPayload:
       RoleName: '{{ RoleName }}'
