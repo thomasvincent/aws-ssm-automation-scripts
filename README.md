@@ -48,6 +48,32 @@ This repository contains a collection of AWS Systems Manager (SSM) Automation do
     - `AdditionalTags`: (Optional) Additional tags to apply
     - `AutomationAssumeRole`: (Optional) The ARN of the automation role
 
+- **`cross_account_resource_management.yaml`**: Manages resources across multiple AWS accounts.
+  - Parameters:
+    - `Operation`: The operation to perform across accounts
+    - `TargetAccounts`: List of AWS account IDs to perform the operation against
+    - `TargetRegions`: (Optional) AWS regions to target
+    - `CrossAccountRoleName`: The name of the IAM role to assume in target accounts
+    - `ResourceType`: (Optional) Type of resource to operate on
+    - `ResourceParameters`: (Optional) Parameters specific to the resource type and operation
+    - `MaxConcurrentAccounts`: (Optional) Maximum number of accounts to process concurrently
+    - `NotificationTopicArn`: (Optional) SNS Topic ARN to send operation notifications to
+    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+
+### Cost Management
+
+- **`cost_optimization_recommendations.yaml`**: Identifies cost optimization opportunities across AWS resources.
+  - Parameters:
+    - `ResourceTypes`: (Optional) Types of resources to check (EC2, EBS, S3, RDS, etc.)
+    - `Region`: (Optional) AWS region to check
+    - `IdleDaysThreshold`: (Optional) Number of days of inactivity to consider a resource idle
+    - `LowUtilizationThreshold`: (Optional) CPU utilization percentage below which to consider an instance underutilized
+    - `NotificationTopicArn`: (Optional) SNS topic ARN to send notifications
+    - `GenerateReport`: (Optional) Whether to generate an HTML report of findings
+    - `ReportS3Bucket`: (Optional) S3 bucket to store the HTML report
+    - `ReportS3Prefix`: (Optional) S3 key prefix for the HTML report
+    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+
 ### Security Management
 
 - **`security_group_audit.yaml`**: Audits and remediates security groups for public access and best practices.
@@ -77,6 +103,16 @@ This repository contains a collection of AWS Systems Manager (SSM) Automation do
     - `ServiceRoleArn`: The service role ARN for the maintenance window tasks
     - `AutomationAssumeRole`: (Optional) The ARN of the automation role
 
+## Shared Python Modules
+
+This repository includes shared Python modules in the `shared/python` directory that provide common functionality for the SSM automation documents:
+
+- **`aws_helpers.py`**: General AWS helper functions (logging, tagging, parameter validation, etc.)
+- **`config_manager.py`**: Configuration management from SSM Parameter Store or S3
+- **`security_helpers.py`**: Security-related helper functions (encryption checks, security group auditing, etc.)
+
+See the [shared README](shared/README.md) for more details.
+
 ## Usage
 
 1. Clone this repository or download the specific script you need
@@ -96,6 +132,72 @@ aws ssm create-document \
 aws ssm start-automation-execution \
   --document-name "MyS3EncryptionDocument" \
   --parameters '{"BucketName":["my-bucket"],"KMSMasterKey":["arn:aws:kms:region:account:key/key-id"]}'
+```
+
+### Using Shared Python Modules
+
+To use the shared Python modules in your SSM documents:
+
+1. Upload the modules to an S3 bucket:
+
+```bash
+aws s3 cp --recursive shared/python s3://your-bucket-name/shared/python/
+```
+
+2. In your SSM document's Python script, add code to import the modules from S3:
+
+```python
+import sys
+import os
+import boto3
+
+# Import shared modules from S3
+s3 = boto3.resource('s3')
+bucket_name = 'your-bucket-name'
+prefix = 'shared/python'
+
+# Create a temporary directory to store the modules
+temp_dir = '/tmp/shared'
+os.makedirs(temp_dir, exist_ok=True)
+
+# Download the modules
+for obj in s3.Bucket(bucket_name).objects.filter(Prefix=prefix):
+    if obj.key.endswith('.py'):
+        local_file = f"{temp_dir}/{os.path.basename(obj.key)}"
+        s3.meta.client.download_file(bucket_name, obj.key, local_file)
+
+# Add to Python path
+sys.path.append(temp_dir)
+
+# Now you can import the modules
+from aws_helpers import setup_logging, create_standard_tags
+```
+
+## Cross-Account Operations
+
+The `cross_account_resource_management.yaml` document allows you to perform operations across multiple AWS accounts. To use it:
+
+1. Create an IAM role in each target account with the same name (e.g., `SSMCrossAccountRole`)
+2. Configure the trust relationship to allow the automation account to assume the role
+3. Register the document in the automation account
+4. Run the automation with the appropriate parameters
+
+Example trust policy for the cross-account role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::AUTOMATION_ACCOUNT_ID:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {}
+    }
+  ]
+}
 ```
 
 ## CI/CD Pipeline
@@ -118,6 +220,8 @@ These scripts follow these AWS best practices:
 4. **Idempotency**: Safe to run multiple times without unexpected side effects
 5. **Documentation**: Comprehensive documentation in the code and README
 6. **Consistent Structure**: Standardized document structure for easier understanding
+7. **Reusability**: Shared modules for common functionality
+8. **Multi-Account Support**: Cross-account resource management capabilities
 
 ## Development
 
@@ -126,8 +230,9 @@ To create new automation documents:
 1. Use the existing scripts as templates
 2. Follow the same parameter structure and naming conventions
 3. Include proper error handling and validation
-4. Add comprehensive documentation in the script and README
-5. Test thoroughly before using in production
+4. Use the shared Python modules for common functionality
+5. Add comprehensive documentation in the script and README
+6. Test thoroughly before using in production
 
 ## License
 

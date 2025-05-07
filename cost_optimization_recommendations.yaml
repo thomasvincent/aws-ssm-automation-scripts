@@ -1,0 +1,807 @@
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Identifies cost optimization opportunities across AWS resources
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  ResourceTypes:
+    type: StringList
+    description: (Optional) Types of resources to check (EC2, EBS, S3, RDS, etc.)
+    default: 
+      - EC2
+      - EBS
+      - S3
+      - RDS
+      - ELB
+  Region:
+    type: String
+    description: (Optional) AWS region to check. If not specified, the current region will be used.
+    default: ""
+  IdleDaysThreshold:
+    type: Integer
+    description: (Optional) Number of days of inactivity to consider a resource idle.
+    default: 30
+    minValue: 1
+    maxValue: 90
+  LowUtilizationThreshold:
+    type: Integer
+    description: (Optional) CPU utilization percentage below which to consider an instance underutilized.
+    default: 10
+    minValue: 1
+    maxValue: 50
+  NotificationTopicArn:
+    type: String
+    description: (Optional) SNS topic ARN to send notifications.
+    default: ""
+  GenerateReport:
+    type: Boolean
+    description: (Optional) Whether to generate an HTML report of findings.
+    default: true
+  ReportS3Bucket:
+    type: String
+    description: (Optional) S3 bucket to store the HTML report.
+    default: ""
+  ReportS3Prefix:
+    type: String
+    description: (Optional) S3 key prefix for the HTML report.
+    default: "cost-optimization-reports/"
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: FindCostOptimizationOpportunities
+    action: aws:executeScript
+    onFailure: Continue
+    inputs:
+      Runtime: python3.8
+      Handler: find_optimization_opportunities
+      Script: |-
+        import boto3
+        import json
+        import datetime
+        import time
+        from datetime import datetime, timezone, timedelta
+        import sys
+        import os
+        import logging
+        
+        # Import shared modules from S3
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        # Initialize necessary clients and helpers
+        def setup_logger():
+            logger = logging.getLogger('cost_optimization')
+            logger.setLevel(logging.INFO)
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            return logger
+            
+        logger = setup_logger()
+        
+        def find_optimization_opportunities(events, context):
+            """
+            Find cost optimization opportunities across AWS resources.
+            
+            Args:
+                events: Input parameters dictionary
+                context: Lambda context
+                
+            Returns:
+                dict: Results of cost optimization analysis
+            """
+            resource_types = events.get('ResourceTypes', ['EC2', 'EBS', 'S3', 'RDS', 'ELB'])
+            region = events.get('Region')
+            idle_days_threshold = events.get('IdleDaysThreshold', 30)
+            low_util_threshold = events.get('LowUtilizationThreshold', 10)
+            
+            # Set up region
+            if region:
+                session = boto3.Session(region_name=region)
+            else:
+                session = boto3.Session()
+                region = session.region_name
+                
+            # Initialize results structure
+            results = {
+                'summary': {
+                    'TotalEstimatedMonthlySavings': 0,
+                    'ResourcesAnalyzed': 0,
+                    'OptimizationOpportunities': 0,
+                    'Region': region,
+                    'TimestampUtc': datetime.now(timezone.utc).isoformat()
+                },
+                'details': {}
+            }
+            
+            # Check each specified resource type
+            for resource_type in resource_types:
+                logger.info(f"Analyzing {resource_type} resources for optimization opportunities")
+                
+                if resource_type == 'EC2':
+                    result = find_ec2_opportunities(session, low_util_threshold, idle_days_threshold)
+                elif resource_type == 'EBS':
+                    result = find_ebs_opportunities(session, idle_days_threshold)
+                elif resource_type == 'S3':
+                    result = find_s3_opportunities(session)
+                elif resource_type == 'RDS':
+                    result = find_rds_opportunities(session, low_util_threshold, idle_days_threshold)
+                elif resource_type == 'ELB':
+                    result = find_elb_opportunities(session, idle_days_threshold)
+                else:
+                    logger.warning(f"Unsupported resource type: {resource_type}")
+                    continue
+                
+                # Add results to overall results
+                results['details'][resource_type] = result
+                results['summary']['ResourcesAnalyzed'] += result['ResourcesAnalyzed']
+                results['summary']['OptimizationOpportunities'] += result['OptimizationOpportunities']
+                results['summary']['TotalEstimatedMonthlySavings'] += result['EstimatedMonthlySavings']
+            
+            return results
+            
+        def find_ec2_opportunities(session, low_util_threshold, idle_days_threshold):
+            """Find EC2 cost optimization opportunities."""
+            ec2 = session.client('ec2')
+            cloudwatch = session.client('cloudwatch')
+            pricing = session.client('pricing', region_name='us-east-1')  # Pricing API is only available in us-east-1
+            
+            result = {
+                'ResourceType': 'EC2',
+                'ResourcesAnalyzed': 0,
+                'OptimizationOpportunities': 0,
+                'EstimatedMonthlySavings': 0,
+                'Recommendations': []
+            }
+            
+            try:
+                # Get all running instances
+                instances_response = ec2.describe_instances(
+                    Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+                )
+                
+                # Process each reservation and instance
+                for reservation in instances_response.get('Reservations', []):
+                    for instance in reservation.get('Instances', []):
+                        result['ResourcesAnalyzed'] += 1
+                        instance_id = instance['InstanceId']
+                        instance_type = instance['InstanceType']
+                        
+                        # Get CPU utilization for the past period
+                        end_time = datetime.now(timezone.utc)
+                        start_time = end_time - timedelta(days=idle_days_threshold)
+                        
+                        try:
+                            cpu_response = cloudwatch.get_metric_statistics(
+                                Namespace='AWS/EC2',
+                                MetricName='CPUUtilization',
+                                Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                                StartTime=start_time,
+                                EndTime=end_time,
+                                Period=86400,  # 1 day in seconds
+                                Statistics=['Average']
+                            )
+                            
+                            datapoints = cpu_response.get('Datapoints', [])
+                            
+                            if not datapoints:
+                                # No data - instance might be idle or not monitored
+                                recommendation = {
+                                    'ResourceId': instance_id,
+                                    'ResourceType': 'EC2 Instance',
+                                    'Issue': 'No monitoring data available',
+                                    'Recommendation': 'Enable detailed monitoring or check if instance is idle',
+                                    'EstimatedMonthlySavings': 0  # Can't estimate without data
+                                }
+                                result['Recommendations'].append(recommendation)
+                                result['OptimizationOpportunities'] += 1
+                                continue
+                                
+                            # Calculate average CPU utilization
+                            avg_cpu = sum(dp['Average'] for dp in datapoints) / len(datapoints)
+                            
+                            # Check if instance is underutilized
+                            if avg_cpu < low_util_threshold:
+                                # Estimate cost of instance
+                                # This is a simplified approach - a real implementation would use the AWS Price List API
+                                estimated_monthly_cost = estimate_ec2_monthly_cost(instance_type)
+                                
+                                recommendation = {
+                                    'ResourceId': instance_id,
+                                    'ResourceType': 'EC2 Instance',
+                                    'Issue': f'Low CPU utilization ({avg_cpu:.2f}%)',
+                                    'Recommendation': 'Consider downsizing instance or using Spot Instances',
+                                    'EstimatedMonthlySavings': estimated_monthly_cost * 0.4  # Assume 40% savings
+                                }
+                                result['Recommendations'].append(recommendation)
+                                result['OptimizationOpportunities'] += 1
+                                result['EstimatedMonthlySavings'] += recommendation['EstimatedMonthlySavings']
+                                
+                        except Exception as e:
+                            logger.error(f"Error analyzing instance {instance_id}: {str(e)}")
+                
+                # Look for stopped instances
+                stopped_instances_response = ec2.describe_instances(
+                    Filters=[{'Name': 'instance-state-name', 'Values': ['stopped']}]
+                )
+                
+                for reservation in stopped_instances_response.get('Reservations', []):
+                    for instance in reservation.get('Instances', []):
+                        result['ResourcesAnalyzed'] += 1
+                        instance_id = instance['InstanceId']
+                        
+                        # Check when the instance was stopped
+                        state_transition_time = instance.get('StateTransitionReason', '')
+                        
+                        # Check if instance has been stopped for a long time
+                        if "User initiated" in state_transition_time and "(" in state_transition_time:
+                            stopped_time_str = state_transition_time.split("(")[1].split(")")[0]
+                            try:
+                                stopped_time = datetime.strptime(stopped_time_str, "%Y-%m-%d %H:%M:%S %Z")
+                                stopped_days = (datetime.now() - stopped_time).days
+                                
+                                if stopped_days > idle_days_threshold:
+                                    recommendation = {
+                                        'ResourceId': instance_id,
+                                        'ResourceType': 'EC2 Instance',
+                                        'Issue': f'Instance stopped for {stopped_days} days',
+                                        'Recommendation': 'Consider terminating unused instance',
+                                        'EstimatedMonthlySavings': 0  # Stopped instances don't incur compute costs
+                                    }
+                                    result['Recommendations'].append(recommendation)
+                                    result['OptimizationOpportunities'] += 1
+                            except:
+                                logger.warning(f"Could not parse stopped time for instance {instance_id}")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error finding EC2 opportunities: {str(e)}")
+                return result
+                
+        def find_ebs_opportunities(session, idle_days_threshold):
+            """Find EBS volume cost optimization opportunities."""
+            ec2 = session.client('ec2')
+            
+            result = {
+                'ResourceType': 'EBS',
+                'ResourcesAnalyzed': 0,
+                'OptimizationOpportunities': 0,
+                'EstimatedMonthlySavings': 0,
+                'Recommendations': []
+            }
+            
+            try:
+                # Get all volumes
+                volumes_response = ec2.describe_volumes()
+                
+                for volume in volumes_response.get('Volumes', []):
+                    result['ResourcesAnalyzed'] += 1
+                    volume_id = volume['VolumeId']
+                    volume_size = volume['Size']
+                    volume_type = volume['VolumeType']
+                    volume_state = volume['State']
+                    
+                    # Check for unattached volumes
+                    if not volume.get('Attachments'):
+                        # Calculate estimated cost based on volume type and size
+                        monthly_cost = estimate_ebs_monthly_cost(volume_type, volume_size)
+                        
+                        recommendation = {
+                            'ResourceId': volume_id,
+                            'ResourceType': 'EBS Volume',
+                            'Issue': 'Unattached volume',
+                            'Recommendation': 'Delete unused volume or attach to an instance',
+                            'EstimatedMonthlySavings': monthly_cost  # Assume 100% savings if deleted
+                        }
+                        result['Recommendations'].append(recommendation)
+                        result['OptimizationOpportunities'] += 1
+                        result['EstimatedMonthlySavings'] += monthly_cost
+                        
+                    # Check for overprovisioned volumes
+                    else:
+                        # Get volume metrics to check utilization
+                        # This is a simplified approach - a real implementation would use CloudWatch metrics
+                        pass
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error finding EBS opportunities: {str(e)}")
+                return result
+                
+        def find_s3_opportunities(session):
+            """Find S3 bucket cost optimization opportunities."""
+            s3 = session.client('s3')
+            
+            result = {
+                'ResourceType': 'S3',
+                'ResourcesAnalyzed': 0,
+                'OptimizationOpportunities': 0,
+                'EstimatedMonthlySavings': 0,
+                'Recommendations': []
+            }
+            
+            try:
+                # Get all buckets
+                buckets_response = s3.list_buckets()
+                
+                for bucket in buckets_response.get('Buckets', []):
+                    result['ResourcesAnalyzed'] += 1
+                    bucket_name = bucket['Name']
+                    
+                    # Check bucket lifecycle configuration
+                    try:
+                        lifecycle = s3.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+                        has_lifecycle = True
+                    except:
+                        has_lifecycle = False
+                        
+                    if not has_lifecycle:
+                        # Recommend adding lifecycle rules
+                        recommendation = {
+                            'ResourceId': bucket_name,
+                            'ResourceType': 'S3 Bucket',
+                            'Issue': 'No lifecycle rules configured',
+                            'Recommendation': 'Add lifecycle rules to transition objects to cheaper storage classes or delete old data',
+                            'EstimatedMonthlySavings': 0  # Need to analyze bucket contents to estimate
+                        }
+                        result['Recommendations'].append(recommendation)
+                        result['OptimizationOpportunities'] += 1
+                    
+                    # Check for versioning without lifecycle rules
+                    try:
+                        versioning = s3.get_bucket_versioning(Bucket=bucket_name)
+                        if versioning.get('Status') == 'Enabled' and not has_lifecycle:
+                            recommendation = {
+                                'ResourceId': bucket_name,
+                                'ResourceType': 'S3 Bucket',
+                                'Issue': 'Versioning enabled but no lifecycle rules for old versions',
+                                'Recommendation': 'Add lifecycle rules to expire old versions to control costs',
+                                'EstimatedMonthlySavings': 0  # Need to analyze versions to estimate
+                            }
+                            result['Recommendations'].append(recommendation)
+                            result['OptimizationOpportunities'] += 1
+                    except:
+                        pass
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error finding S3 opportunities: {str(e)}")
+                return result
+                
+        def find_rds_opportunities(session, low_util_threshold, idle_days_threshold):
+            """Find RDS database cost optimization opportunities."""
+            rds = session.client('rds')
+            cloudwatch = session.client('cloudwatch')
+            
+            result = {
+                'ResourceType': 'RDS',
+                'ResourcesAnalyzed': 0,
+                'OptimizationOpportunities': 0,
+                'EstimatedMonthlySavings': 0,
+                'Recommendations': []
+            }
+            
+            try:
+                # Get all DB instances
+                instances_response = rds.describe_db_instances()
+                
+                for instance in instances_response.get('DBInstances', []):
+                    result['ResourcesAnalyzed'] += 1
+                    instance_id = instance['DBInstanceIdentifier']
+                    instance_class = instance['DBInstanceClass']
+                    multi_az = instance['MultiAZ']
+                    
+                    # Get CPU utilization for the past period
+                    end_time = datetime.now(timezone.utc)
+                    start_time = end_time - timedelta(days=idle_days_threshold)
+                    
+                    try:
+                        cpu_response = cloudwatch.get_metric_statistics(
+                            Namespace='AWS/RDS',
+                            MetricName='CPUUtilization',
+                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': instance_id}],
+                            StartTime=start_time,
+                            EndTime=end_time,
+                            Period=86400,  # 1 day in seconds
+                            Statistics=['Average']
+                        )
+                        
+                        datapoints = cpu_response.get('Datapoints', [])
+                        
+                        if datapoints:
+                            # Calculate average CPU utilization
+                            avg_cpu = sum(dp['Average'] for dp in datapoints) / len(datapoints)
+                            
+                            # Check if instance is underutilized
+                            if avg_cpu < low_util_threshold:
+                                # Estimate cost of instance
+                                estimated_monthly_cost = estimate_rds_monthly_cost(instance_class, multi_az)
+                                
+                                recommendation = {
+                                    'ResourceId': instance_id,
+                                    'ResourceType': 'RDS Instance',
+                                    'Issue': f'Low CPU utilization ({avg_cpu:.2f}%)',
+                                    'Recommendation': 'Consider downsizing instance class',
+                                    'EstimatedMonthlySavings': estimated_monthly_cost * 0.3  # Assume 30% savings
+                                }
+                                result['Recommendations'].append(recommendation)
+                                result['OptimizationOpportunities'] += 1
+                                result['EstimatedMonthlySavings'] += recommendation['EstimatedMonthlySavings']
+                    except Exception as e:
+                        logger.error(f"Error analyzing RDS instance {instance_id}: {str(e)}")
+                    
+                    # Check for Multi-AZ in non-production environments
+                    if multi_az:
+                        # This is a simplified approach - a real implementation would check for environment tags
+                        tags_response = rds.list_tags_for_resource(ResourceName=instance['DBInstanceArn'])
+                        is_production = False
+                        
+                        for tag in tags_response.get('TagList', []):
+                            if tag['Key'].lower() in ['environment', 'env'] and tag['Value'].lower() in ['prod', 'production']:
+                                is_production = True
+                                break
+                        
+                        if not is_production:
+                            # Estimate cost savings from disabling Multi-AZ
+                            estimated_monthly_cost = estimate_rds_monthly_cost(instance_class, multi_az)
+                            single_az_cost = estimate_rds_monthly_cost(instance_class, False)
+                            savings = estimated_monthly_cost - single_az_cost
+                            
+                            recommendation = {
+                                'ResourceId': instance_id,
+                                'ResourceType': 'RDS Instance',
+                                'Issue': 'Multi-AZ deployment in non-production environment',
+                                'Recommendation': 'Consider disabling Multi-AZ for non-production environments',
+                                'EstimatedMonthlySavings': savings
+                            }
+                            result['Recommendations'].append(recommendation)
+                            result['OptimizationOpportunities'] += 1
+                            result['EstimatedMonthlySavings'] += savings
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error finding RDS opportunities: {str(e)}")
+                return result
+                
+        def find_elb_opportunities(session, idle_days_threshold):
+            """Find ELB (Elastic Load Balancer) cost optimization opportunities."""
+            elb = session.client('elbv2')
+            cloudwatch = session.client('cloudwatch')
+            
+            result = {
+                'ResourceType': 'ELB',
+                'ResourcesAnalyzed': 0,
+                'OptimizationOpportunities': 0,
+                'EstimatedMonthlySavings': 0,
+                'Recommendations': []
+            }
+            
+            try:
+                # Get all load balancers
+                elbs_response = elb.describe_load_balancers()
+                
+                for lb in elbs_response.get('LoadBalancers', []):
+                    result['ResourcesAnalyzed'] += 1
+                    lb_arn = lb['LoadBalancerArn']
+                    lb_name = lb['LoadBalancerName']
+                    lb_type = lb['Type']
+                    
+                    # Get request count for the past period
+                    end_time = datetime.now(timezone.utc)
+                    start_time = end_time - timedelta(days=idle_days_threshold)
+                    
+                    try:
+                        request_count_response = cloudwatch.get_metric_statistics(
+                            Namespace='AWS/ApplicationELB' if lb_type == 'application' else 'AWS/NetworkELB',
+                            MetricName='RequestCount' if lb_type == 'application' else 'ActiveFlowCount',
+                            Dimensions=[{'Name': 'LoadBalancer', 'Value': lb_arn.split('/')[-1]}],
+                            StartTime=start_time,
+                            EndTime=end_time,
+                            Period=86400,  # 1 day in seconds
+                            Statistics=['Sum']
+                        )
+                        
+                        datapoints = request_count_response.get('Datapoints', [])
+                        
+                        if not datapoints or all(dp['Sum'] == 0 for dp in datapoints):
+                            # Estimate cost of load balancer
+                            estimated_monthly_cost = 25 if lb_type == 'application' else 20  # Simplified estimate
+                            
+                            recommendation = {
+                                'ResourceId': lb_name,
+                                'ResourceType': f'{lb_type.capitalize()} Load Balancer',
+                                'Issue': 'Idle load balancer with no traffic',
+                                'Recommendation': 'Consider deleting unused load balancer',
+                                'EstimatedMonthlySavings': estimated_monthly_cost
+                            }
+                            result['Recommendations'].append(recommendation)
+                            result['OptimizationOpportunities'] += 1
+                            result['EstimatedMonthlySavings'] += estimated_monthly_cost
+                    except Exception as e:
+                        logger.error(f"Error analyzing load balancer {lb_name}: {str(e)}")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error finding ELB opportunities: {str(e)}")
+                return result
+        
+        def estimate_ec2_monthly_cost(instance_type):
+            """Simplified function to estimate EC2 instance monthly cost."""
+            # This is a very simplified approach - in a real implementation, you would use the AWS Price List API
+            cost_map = {
+                't2.micro': 8,
+                't2.small': 18,
+                't2.medium': 36,
+                'm5.large': 80,
+                'm5.xlarge': 160,
+                'c5.large': 85,
+                'c5.xlarge': 170,
+                'r5.large': 120,
+                'r5.xlarge': 240
+            }
+            
+            return cost_map.get(instance_type, 100)  # Default to $100 if not found
+            
+        def estimate_ebs_monthly_cost(volume_type, size_gb):
+            """Simplified function to estimate EBS volume monthly cost."""
+            # This is a very simplified approach - in a real implementation, you would use the AWS Price List API
+            cost_per_gb = {
+                'gp2': 0.10,
+                'gp3': 0.08,
+                'io1': 0.125,
+                'io2': 0.125,
+                'st1': 0.045,
+                'sc1': 0.025,
+                'standard': 0.05
+            }
+            
+            return cost_per_gb.get(volume_type, 0.10) * size_gb
+            
+        def estimate_rds_monthly_cost(instance_class, multi_az):
+            """Simplified function to estimate RDS instance monthly cost."""
+            # This is a very simplified approach - in a real implementation, you would use the AWS Price List API
+            cost_map = {
+                'db.t3.small': 25,
+                'db.t3.medium': 50,
+                'db.r5.large': 180,
+                'db.r5.xlarge': 360,
+                'db.m5.large': 140,
+                'db.m5.xlarge': 280
+            }
+            
+            base_cost = cost_map.get(instance_class, 100)  # Default to $100 if not found
+            return base_cost * 2 if multi_az else base_cost  # Multi-AZ doubles the cost
+      InputPayload:
+        ResourceTypes: '{{ ResourceTypes }}'
+        Region: '{{ Region }}'
+        IdleDaysThreshold: '{{ IdleDaysThreshold }}'
+        LowUtilizationThreshold: '{{ LowUtilizationThreshold }}'
+    outputs:
+      - Name: CostOptimizationResults
+        Selector: $.Payload
+        Type: StringMap
+        
+  - name: GenerateReportAndNotify
+    action: aws:executeScript
+    onFailure: Continue
+    inputs:
+      Runtime: python3.8
+      Handler: generate_report_and_notify
+      Script: |-
+        import boto3
+        import json
+        import datetime
+        from datetime import datetime, timezone
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger('cost_optimization_report')
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+        def generate_report_and_notify(events, context):
+            """
+            Generate an HTML report of cost optimization findings and send notifications.
+            
+            Args:
+                events: Input parameters dictionary
+                context: Lambda context
+                
+            Returns:
+                dict: Results of report generation and notification
+            """
+            results = events.get('CostOptimizationResults', {})
+            generate_report = events.get('GenerateReport', True)
+            report_s3_bucket = events.get('ReportS3Bucket', '')
+            report_s3_prefix = events.get('ReportS3Prefix', 'cost-optimization-reports/')
+            notification_topic_arn = events.get('NotificationTopicArn', '')
+            
+            response = {
+                'ReportGenerated': False,
+                'ReportURL': '',
+                'NotificationSent': False
+            }
+            
+            # Generate HTML report if requested
+            if generate_report:
+                html_report = generate_html_report(results)
+                
+                # Store report in S3 if bucket provided
+                if report_s3_bucket:
+                    try:
+                        s3 = boto3.client('s3')
+                        report_key = f"{report_s3_prefix.rstrip('/')}/cost-optimization-report-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.html"
+                        
+                        s3.put_object(
+                            Bucket=report_s3_bucket,
+                            Key=report_key,
+                            Body=html_report.encode('utf-8'),
+                            ContentType='text/html'
+                        )
+                        
+                        # Generate presigned URL for the report
+                        report_url = s3.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': report_s3_bucket, 'Key': report_key},
+                            ExpiresIn=604800  # URL valid for 1 week
+                        )
+                        
+                        response['ReportGenerated'] = True
+                        response['ReportURL'] = report_url
+                        logger.info(f"Report generated and stored at s3://{report_s3_bucket}/{report_key}")
+                    except Exception as e:
+                        logger.error(f"Error storing report in S3: {str(e)}")
+                else:
+                    # Just return the HTML report content
+                    response['ReportGenerated'] = True
+                    response['ReportContent'] = html_report
+            
+            # Send notification if SNS topic provided
+            if notification_topic_arn:
+                try:
+                    sns = boto3.client('sns')
+                    
+                    # Compose notification message
+                    summary = results.get('summary', {})
+                    message = f"""
+                    AWS Cost Optimization Report - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
+                    
+                    Region: {summary.get('Region', 'Unknown')}
+                    Resources Analyzed: {summary.get('ResourcesAnalyzed', 0)}
+                    Optimization Opportunities: {summary.get('OptimizationOpportunities', 0)}
+                    Estimated Monthly Savings: ${summary.get('TotalEstimatedMonthlySavings', 0):.2f}
+                    
+                    """
+                    
+                    if response['ReportURL']:
+                        message += f"Full report available at: {response['ReportURL']}"
+                    
+                    sns.publish(
+                        TopicArn=notification_topic_arn,
+                        Subject=f"AWS Cost Optimization Report - ${summary.get('TotalEstimatedMonthlySavings', 0):.2f} Potential Savings",
+                        Message=message
+                    )
+                    
+                    response['NotificationSent'] = True
+                    logger.info(f"Notification sent to {notification_topic_arn}")
+                except Exception as e:
+                    logger.error(f"Error sending notification: {str(e)}")
+            
+            return response
+            
+        def generate_html_report(results):
+            """Generate HTML report from cost optimization results."""
+            summary = results.get('summary', {})
+            details = results.get('details', {})
+            
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>AWS Cost Optimization Report</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    h1, h2, h3 {{ color: #0066cc; }}
+                    table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; }}
+                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                    .summary {{ background-color: #f0f0f0; padding: 15px; margin-bottom: 20px; }}
+                    .savings {{ color: green; font-weight: bold; }}
+                </style>
+            </head>
+            <body>
+                <h1>AWS Cost Optimization Report</h1>
+                <div class="summary">
+                    <h2>Summary</h2>
+                    <p><strong>Date:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+                    <p><strong>Region:</strong> {summary.get('Region', 'Unknown')}</p>
+                    <p><strong>Resources Analyzed:</strong> {summary.get('ResourcesAnalyzed', 0)}</p>
+                    <p><strong>Optimization Opportunities:</strong> {summary.get('OptimizationOpportunities', 0)}</p>
+                    <p><strong>Estimated Monthly Savings:</strong> <span class="savings">${summary.get('TotalEstimatedMonthlySavings', 0):.2f}</span></p>
+                </div>
+            """
+            
+            # Add section for each resource type
+            for resource_type, resource_data in details.items():
+                recommendations = resource_data.get('Recommendations', [])
+                if not recommendations:
+                    continue
+                    
+                html += f"""
+                <h2>{resource_type} Optimization Opportunities</h2>
+                <p>Resources Analyzed: {resource_data.get('ResourcesAnalyzed', 0)}</p>
+                <p>Optimization Opportunities: {resource_data.get('OptimizationOpportunities', 0)}</p>
+                <p>Estimated Monthly Savings: <span class="savings">${resource_data.get('EstimatedMonthlySavings', 0):.2f}</span></p>
+                
+                <table>
+                    <tr>
+                        <th>Resource ID</th>
+                        <th>Resource Type</th>
+                        <th>Issue</th>
+                        <th>Recommendation</th>
+                        <th>Estimated Monthly Savings</th>
+                    </tr>
+                """
+                
+                # Add rows for each recommendation
+                for rec in recommendations:
+                    html += f"""
+                    <tr>
+                        <td>{rec.get('ResourceId', 'Unknown')}</td>
+                        <td>{rec.get('ResourceType', 'Unknown')}</td>
+                        <td>{rec.get('Issue', 'Unknown')}</td>
+                        <td>{rec.get('Recommendation', 'Unknown')}</td>
+                        <td>${rec.get('EstimatedMonthlySavings', 0):.2f}</td>
+                    </tr>
+                    """
+                
+                html += "</table>"
+            
+            # Add footer
+            html += """
+                <h3>Next Steps</h3>
+                <p>Review these recommendations and consider implementing them to optimize your AWS costs. Before making any changes, evaluate the impact on your workloads and ensure that business requirements are still met.</p>
+                
+                <h3>Additional Cost Optimization Strategies</h3>
+                <ul>
+                    <li>Use AWS Cost Explorer to analyze your spending patterns</li>
+                    <li>Implement resource tagging to track costs by department or project</li>
+                    <li>Set up AWS Budgets to alert you when costs exceed thresholds</li>
+                    <li>Consider using Savings Plans or Reserved Instances for predictable workloads</li>
+                    <li>Use Auto Scaling to match capacity to demand</li>
+                </ul>
+            </body>
+            </html>
+            """
+            
+            return html
+      InputPayload:
+        CostOptimizationResults: '{{ FindCostOptimizationOpportunities.CostOptimizationResults }}'
+        GenerateReport: '{{ GenerateReport }}'
+        ReportS3Bucket: '{{ ReportS3Bucket }}'
+        ReportS3Prefix: '{{ ReportS3Prefix }}'
+        NotificationTopicArn: '{{ NotificationTopicArn }}'
+    outputs:
+      - Name: ReportGenerated
+        Selector: $.Payload.ReportGenerated
+        Type: Boolean
+      - Name: ReportURL
+        Selector: $.Payload.ReportURL
+        Type: String
+      - Name: NotificationSent
+        Selector: $.Payload.NotificationSent
+        Type: Boolean
+    isEnd: true
