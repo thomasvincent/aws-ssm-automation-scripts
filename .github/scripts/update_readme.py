@@ -17,6 +17,8 @@ CATEGORIES = {
     'create_and_tag_resources.yaml': 'Resource Management',
     'security_group_audit.yaml': 'Security Management',
     'maintenance_window_setup.yaml': 'Maintenance Windows',
+    'lambda_function_management.yaml': 'Lambda Management',
+    'cloudfront_distribution_management.yaml': 'CDN Management',
 }
 
 def get_script_category(filename):
@@ -38,6 +40,10 @@ def get_script_category(filename):
         return 'Resource Management'
     elif 'maintenance' in base_filename or 'window' in base_filename:
         return 'Maintenance Windows'
+    elif 'lambda' in base_filename or 'function' in base_filename:
+        return 'Lambda Management'
+    elif 'cloudfront' in base_filename or 'distribution' in base_filename or 'cdn' in base_filename:
+        return 'CDN Management'
     else:
         return 'Other Utilities'
 

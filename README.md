@@ -16,6 +16,26 @@ This repository contains a collection of AWS Systems Manager (SSM) Automation do
     - `AWSManagedPolicies`: A list of AWS managed policy names to attach
     - `CustomerManagedPolicies`: A list of customer managed policy ARNs to attach
 
+### Lambda Management
+
+- **`lambda_function_management.yaml`**: Creates, updates, and manages AWS Lambda functions.
+  - Parameters:
+    - `Operation`: The operation to perform (Create, Update, Enable, Disable, AddAlias, UpdateConcurrency)
+    - `FunctionName`: The name of the Lambda function
+    - `S3Bucket`: S3 bucket containing the Lambda deployment package
+    - `S3Key`: S3 key for the Lambda deployment package
+    - `Handler`: The function within your code that Lambda calls to begin execution
+    - `Runtime`: The runtime environment for the Lambda function
+    - `MemorySize`: The amount of memory available to the function at runtime
+    - `Timeout`: The amount of time that Lambda allows a function to run before stopping it
+    - `Role`: The ARN of the IAM role that Lambda assumes
+    - `Environment`: Environment variables for the Lambda function
+    - `Tags`: Tags for the Lambda function
+    - `ReservedConcurrentExecutions`: The number of reserved concurrent executions
+    - `AliasName`: Name of the Lambda alias to create or update
+    - `AliasVersion`: Function version that the alias invokes
+    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+
 ### S3 Management
 
 - **`s3_encryption.yaml`**: Enables server-side encryption on an S3 bucket using a KMS key.
@@ -31,6 +51,24 @@ This repository contains a collection of AWS Systems Manager (SSM) Automation do
     - `InstanceIds`: List of EC2 instance IDs to patch
     - `RebootOption`: Whether to reboot instances after patching
     - `PatchSeverity`: The severity level of patches to apply
+    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+
+### CDN Management
+
+- **`cloudfront_distribution_management.yaml`**: Manages AWS CloudFront distributions, including creation, update, invalidation and security configuration.
+  - Parameters:
+    - `Operation`: The operation to perform (Create, Update, Invalidate, EnableLogging, DisableLogging, UpdateSecurityConfig, GetDistributionConfig)
+    - `DistributionId`: The ID of an existing CloudFront distribution
+    - `OriginDomainName`: The origin domain name for the distribution
+    - `OriginPath`: The origin path for the distribution
+    - `DefaultCacheBehavior`: Default cache behavior configuration
+    - `CacheBehaviors`: Map of path patterns to cache behaviors
+    - `ViewerCertificateConfig`: Viewer certificate configuration
+    - `LoggingConfig`: Logging configuration
+    - `PathsToInvalidate`: List of paths to invalidate
+    - `SecurityPolicyConfig`: Security policy configuration
+    - `AlternateDomainNames`: List of CNAME aliases to associate
+    - `Tags`: Tags for the CloudFront distribution
     - `AutomationAssumeRole`: (Optional) The ARN of the automation role
 
 ### Resource Management
@@ -210,6 +248,36 @@ This repository uses GitHub Actions for continuous integration and continuous de
 - **Automatic Releases**: New releases are created automatically when version tags are pushed
 - **Dependency Management**: Dependabot keeps dependencies up to date
 
+## Releases and Versioning
+
+This repository uses semantic versioning (SemVer) for releases and is published to GitHub Packages.
+
+### Installing from GitHub Packages
+
+You can install these automation scripts from GitHub Packages:
+
+```bash
+# Configure npm to use GitHub Packages (first time only)
+echo "@thomasvincent:registry=https://npm.pkg.github.com" >> .npmrc
+
+# Install the package
+npm install @thomasvincent/aws-ssm-automation-scripts
+```
+
+### Release Process
+
+Releases are created automatically using GitHub Actions when a new version is created:
+
+1. A version bump is triggered using the workflow dispatch event
+2. The version is incremented in package.json (major, minor, or patch)
+3. A new tag and release is created with the new version number
+4. A zip file containing all the SSM documents is attached to the release
+5. The package is published to GitHub Packages
+
+### Using the Release Assets
+
+The release assets (zip file) include all SSM documents and shared modules, ready to be deployed to AWS Systems Manager.
+
 ## Best Practices
 
 These scripts follow these AWS best practices:
@@ -222,6 +290,7 @@ These scripts follow these AWS best practices:
 6. **Consistent Structure**: Standardized document structure for easier understanding
 7. **Reusability**: Shared modules for common functionality
 8. **Multi-Account Support**: Cross-account resource management capabilities
+9. **Versioning**: Proper versioning and release management
 
 ## Development
 

@@ -31,9 +31,12 @@ jobs:
           role-to-assume: ${{ secrets.SANDBOX_ROLE_ARN }}
           role-duration-seconds: 1800
           
-      - name: Install AWS CLI
+      - name: Install AWS CLI v2
         run: |
-          pip install awscli
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
           
       - name: Register and test SSM documents
         run: |
@@ -43,12 +46,15 @@ jobs:
             file_basename=$(basename "$file")
             document_name="Test-$(echo $file_basename | sed 's/\.yaml$\|\.yml$//')-${{ github.run_id }}"
             
+            # Convert YAML to JSON for AWS CLI v2 compatibility
+            python3 -c "import yaml, json, sys; print(json.dumps(yaml.safe_load(open('$file', 'r'))))" > temp_document.json
+            
             # Register document in SSM
             echo "Registering document $document_name..."
             aws ssm create-document \
               --name "$document_name" \
               --document-type "Automation" \
-              --content file://$file
+              --content file://temp_document.json
               
             # Document successfully registered
             echo "Document $document_name registered successfully!"
@@ -56,4 +62,5 @@ jobs:
             # Clean up after tests
             echo "Cleaning up document $document_name..."
             aws ssm delete-document --name "$document_name"
+            rm -f temp_document.json
           done
