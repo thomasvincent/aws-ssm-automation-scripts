@@ -1,5 +1,9 @@
 # AWS SSM Automation Scripts
 
+[![Validate SSM Documents](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/validate.yml/badge.svg)](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/validate.yml)
+[![Security Scan](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/security-scan.yml/badge.svg)](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/security-scan.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 This repository contains a collection of AWS Systems Manager (SSM) Automation documents that help automate various AWS management and operational tasks. These scripts follow AWS best practices and can be used to streamline common operational tasks.
 
 ## Scripts
@@ -93,6 +97,16 @@ aws ssm start-automation-execution \
   --document-name "MyS3EncryptionDocument" \
   --parameters '{"BucketName":["my-bucket"],"KMSMasterKey":["arn:aws:kms:region:account:key/key-id"]}'
 ```
+
+## CI/CD Pipeline
+
+This repository uses GitHub Actions for continuous integration and continuous deployment:
+
+- **Validation**: All YAML files are automatically linted and validated when pushed
+- **Security Scanning**: CodeQL security scanning is performed on all code changes
+- **Automated Testing**: Scripts can be tested in a sandbox environment when approved
+- **Automatic Releases**: New releases are created automatically when version tags are pushed
+- **Dependency Management**: Dependabot keeps dependencies up to date
 
 ## Best Practices
 

@@ -1,0 +1,52 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - name: Get the version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
+      - name: Generate changelog
+        id: changelog
+        uses: metcalfc/changelog-generator@v4.0.1
+        with:
+          myToken: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Changes in this Release
+            
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ## SSM Documents
+            
+            This release includes the following SSM Automation documents:
+            
+            - `attach_policies_to_role.yaml`: Attaches IAM policies to a role
+            - `s3_encryption.yaml`: Enables server-side encryption on S3 buckets
+            - `ec2_instance_patching.yaml`: Patches EC2 instances
+            - `create_and_tag_resources.yaml`: Creates and tags AWS resources
+            - `security_group_audit.yaml`: Audits and remediates security groups
+            - `maintenance_window_setup.yaml`: Sets up SSM maintenance windows
+          draft: false
+          prerelease: false
