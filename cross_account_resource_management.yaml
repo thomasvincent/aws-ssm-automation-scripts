@@ -1,0 +1,944 @@
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Manages resources across multiple AWS accounts
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  Operation:
+    type: String
+    description: (Required) The operation to perform across accounts.
+    allowedValues:
+      - CreateResources
+      - TagResources
+      - InventoryResources
+      - UpdateSecurityGroups
+      - PatchInstances
+  TargetAccounts:
+    type: StringList
+    description: (Required) List of AWS account IDs to perform the operation against.
+  TargetRegions:
+    type: StringList
+    description: (Optional) AWS regions to target. If not specified, only the current region will be used.
+    default: []
+  CrossAccountRoleName:
+    type: String
+    description: (Required) The name of the IAM role to assume in target accounts. Must be the same name across all accounts.
+  ResourceType:
+    type: String
+    description: (Optional) Type of resource to operate on. Required for CreateResources, TagResources, UpdateSecurityGroups.
+    default: ""
+    allowedValues:
+      - ""
+      - EC2
+      - S3
+      - RDS
+      - SecurityGroup
+      - IAMRole
+  ResourceParameters:
+    type: StringMap
+    description: (Optional) Parameters specific to the resource type and operation.
+    default: {}
+  TagKey:
+    type: String
+    description: (Optional) Tag key when performing TagResources operation.
+    default: ""
+  TagValue:
+    type: String
+    description: (Optional) Tag value when performing TagResources operation.
+    default: ""
+  MaxConcurrentAccounts:
+    type: Integer
+    description: (Optional) Maximum number of accounts to process concurrently.
+    default: 5
+    minValue: 1
+    maxValue: 10
+  NotificationTopicArn:
+    type: String
+    description: (Optional) SNS Topic ARN to send operation notifications to.
+    default: ""
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: ValidateInputs
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.8
+      Handler: validate_inputs
+      Script: |-
+        import boto3
+        import json
+        import logging
+        
+        # Setup logging
+        logger = logging.getLogger('cross_account_manager')
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+        def validate_inputs(events, context):
+            """
+            Validate input parameters before processing.
+            
+            Args:
+                events: Input parameters dictionary
+                context: Lambda context
+                
+            Returns:
+                dict: Validation results
+            """
+            operation = events.get('Operation')
+            target_accounts = events.get('TargetAccounts', [])
+            cross_account_role_name = events.get('CrossAccountRoleName')
+            resource_type = events.get('ResourceType', '')
+            resource_parameters = events.get('ResourceParameters', {})
+            tag_key = events.get('TagKey', '')
+            tag_value = events.get('TagValue', '')
+            
+            validation_errors = []
+            
+            # Validate required parameters
+            if not operation:
+                validation_errors.append("Operation parameter is required")
+                
+            if not target_accounts:
+                validation_errors.append("TargetAccounts parameter is required and must contain at least one account ID")
+                
+            if not cross_account_role_name:
+                validation_errors.append("CrossAccountRoleName parameter is required")
+                
+            # Validate operation-specific requirements
+            if operation == 'CreateResources':
+                if not resource_type:
+                    validation_errors.append("ResourceType parameter is required for CreateResources operation")
+                if not resource_parameters:
+                    validation_errors.append("ResourceParameters parameter is required for CreateResources operation")
+                    
+            elif operation == 'TagResources':
+                if not resource_type:
+                    validation_errors.append("ResourceType parameter is required for TagResources operation")
+                if not tag_key:
+                    validation_errors.append("TagKey parameter is required for TagResources operation")
+                if not tag_value:
+                    validation_errors.append("TagValue parameter is required for TagResources operation")
+                    
+            elif operation == 'UpdateSecurityGroups':
+                if not resource_type or resource_type != 'SecurityGroup':
+                    validation_errors.append("ResourceType parameter must be 'SecurityGroup' for UpdateSecurityGroups operation")
+                if not resource_parameters:
+                    validation_errors.append("ResourceParameters parameter is required for UpdateSecurityGroups operation")
+            
+            # Check if we can assume the role in at least one account
+            if not validation_errors:
+                sts = boto3.client('sts')
+                try:
+                    # Try to assume the role in the first account
+                    role_arn = f"arn:aws:iam::{target_accounts[0]}:role/{cross_account_role_name}"
+                    # Just check if the role exists, don't actually assume it yet
+                    sts.get_caller_identity()  # Verify current identity before role assumption
+                except Exception as e:
+                    validation_errors.append(f"Error validating credentials: {str(e)}")
+            
+            # Check AWS account IDs format
+            for account_id in target_accounts:
+                if not account_id.isdigit() or len(account_id) != 12:
+                    validation_errors.append(f"Invalid AWS account ID format: {account_id}. Must be 12 digits.")
+            
+            # Return validation results
+            if validation_errors:
+                return {
+                    'IsValid': False,
+                    'ValidationErrors': validation_errors
+                }
+            else:
+                return {
+                    'IsValid': True,
+                    'Message': "Input validation successful"
+                }
+      InputPayload:
+        Operation: '{{ Operation }}'
+        TargetAccounts: '{{ TargetAccounts }}'
+        CrossAccountRoleName: '{{ CrossAccountRoleName }}'
+        ResourceType: '{{ ResourceType }}'
+        ResourceParameters: '{{ ResourceParameters }}'
+        TagKey: '{{ TagKey }}'
+        TagValue: '{{ TagValue }}'
+    outputs:
+      - Name: IsValid
+        Selector: $.Payload.IsValid
+        Type: Boolean
+      - Name: ValidationErrors
+        Selector: $.Payload.ValidationErrors
+        Type: StringList
+        
+  - name: ProcessMultipleAccounts
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.8
+      Handler: process_accounts
+      Script: |-
+        import boto3
+        import json
+        import logging
+        import time
+        import concurrent.futures
+        from botocore.exceptions import ClientError
+        
+        # Setup logging
+        logger = logging.getLogger('cross_account_manager')
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+        def process_accounts(events, context):
+            """
+            Process operations across multiple AWS accounts.
+            
+            Args:
+                events: Input parameters dictionary
+                context: Lambda context
+                
+            Returns:
+                dict: Processing results across accounts
+            """
+            operation = events.get('Operation')
+            target_accounts = events.get('TargetAccounts', [])
+            target_regions = events.get('TargetRegions', [])
+            cross_account_role_name = events.get('CrossAccountRoleName')
+            resource_type = events.get('ResourceType', '')
+            resource_parameters = events.get('ResourceParameters', {})
+            tag_key = events.get('TagKey', '')
+            tag_value = events.get('TagValue', '')
+            max_concurrent_accounts = events.get('MaxConcurrentAccounts', 5)
+            notification_topic_arn = events.get('NotificationTopicArn', '')
+            
+            # Get the current region if no target regions specified
+            if not target_regions:
+                current_region = boto3.session.Session().region_name
+                target_regions = [current_region]
+            
+            # Process accounts based on the operation
+            results = {
+                'Operation': operation,
+                'AccountsProcessed': 0,
+                'RegionsProcessed': len(target_regions),
+                'SuccessfulOperations': 0,
+                'FailedOperations': 0,
+                'AccountResults': []
+            }
+            
+            # Process accounts with concurrency limit
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent_accounts) as executor:
+                # Create a list of future to account ID mappings
+                future_to_account = {
+                    executor.submit(
+                        process_single_account,
+                        account_id,
+                        cross_account_role_name,
+                        operation,
+                        target_regions,
+                        resource_type,
+                        resource_parameters,
+                        tag_key,
+                        tag_value
+                    ): account_id for account_id in target_accounts
+                }
+                
+                # Process as they complete
+                for future in concurrent.futures.as_completed(future_to_account):
+                    account_id = future_to_account[future]
+                    try:
+                        account_result = future.result()
+                        results['AccountResults'].append(account_result)
+                        
+                        # Update summary counts
+                        results['AccountsProcessed'] += 1
+                        
+                        if account_result.get('Status') == 'Success':
+                            results['SuccessfulOperations'] += 1
+                        else:
+                            results['FailedOperations'] += 1
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing account {account_id}: {str(e)}")
+                        results['AccountResults'].append({
+                            'AccountId': account_id,
+                            'Status': 'Failed',
+                            'Error': str(e)
+                        })
+                        results['AccountsProcessed'] += 1
+                        results['FailedOperations'] += 1
+            
+            # Send notification if topic ARN provided
+            if notification_topic_arn:
+                try:
+                    send_notification(notification_topic_arn, results)
+                except Exception as e:
+                    logger.error(f"Error sending notification: {str(e)}")
+            
+            return results
+            
+        def process_single_account(account_id, role_name, operation, regions, resource_type, 
+                                 resource_parameters, tag_key, tag_value):
+            """Process operations for a single AWS account."""
+            logger.info(f"Processing account {account_id} for operation {operation}")
+            
+            try:
+                # Assume role in the target account
+                sts = boto3.client('sts')
+                role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
+                
+                assumed_role = sts.assume_role(
+                    RoleArn=role_arn,
+                    RoleSessionName=f"CrossAccountAutomation-{operation}"
+                )
+                
+                credentials = assumed_role['Credentials']
+                
+                # Process each region
+                region_results = []
+                
+                for region in regions:
+                    try:
+                        # Create session with assumed role credentials
+                        session = boto3.Session(
+                            aws_access_key_id=credentials['AccessKeyId'],
+                            aws_secret_access_key=credentials['SecretAccessKey'],
+                            aws_session_token=credentials['SessionToken'],
+                            region_name=region
+                        )
+                        
+                        # Perform the operation based on the operation type
+                        if operation == 'CreateResources':
+                            result = create_resource(session, resource_type, resource_parameters)
+                        elif operation == 'TagResources':
+                            result = tag_resources(session, resource_type, resource_parameters, tag_key, tag_value)
+                        elif operation == 'InventoryResources':
+                            result = inventory_resources(session, resource_type)
+                        elif operation == 'UpdateSecurityGroups':
+                            result = update_security_groups(session, resource_parameters)
+                        elif operation == 'PatchInstances':
+                            result = patch_instances(session, resource_parameters)
+                        else:
+                            result = {'Status': 'Failed', 'Error': f"Unsupported operation: {operation}"}
+                            
+                        region_results.append({
+                            'Region': region,
+                            'Status': result.get('Status', 'Unknown'),
+                            'Details': result
+                        })
+                    except Exception as e:
+                        logger.error(f"Error processing region {region} in account {account_id}: {str(e)}")
+                        region_results.append({
+                            'Region': region,
+                            'Status': 'Failed',
+                            'Error': str(e)
+                        })
+                
+                # Calculate overall status for the account
+                successful_regions = sum(1 for r in region_results if r['Status'] == 'Success')
+                
+                return {
+                    'AccountId': account_id,
+                    'Status': 'Success' if successful_regions == len(regions) else 'PartialSuccess' if successful_regions > 0 else 'Failed',
+                    'RegionsProcessed': len(regions),
+                    'SuccessfulRegions': successful_regions,
+                    'RegionResults': region_results
+                }
+                
+            except Exception as e:
+                logger.error(f"Error assuming role in account {account_id}: {str(e)}")
+                return {
+                    'AccountId': account_id,
+                    'Status': 'Failed',
+                    'Error': str(e)
+                }
+        
+        def create_resource(session, resource_type, parameters):
+            """Create resources in the target account."""
+            if resource_type == 'EC2':
+                return create_ec2_instance(session, parameters)
+            elif resource_type == 'S3':
+                return create_s3_bucket(session, parameters)
+            elif resource_type == 'RDS':
+                return create_rds_instance(session, parameters)
+            elif resource_type == 'IAMRole':
+                return create_iam_role(session, parameters)
+            else:
+                return {'Status': 'Failed', 'Error': f"Unsupported resource type: {resource_type}"}
+                
+        def create_ec2_instance(session, parameters):
+            """Create EC2 instance in the target account."""
+            try:
+                ec2 = session.client('ec2')
+                
+                # Extract required parameters
+                ami_id = parameters.get('AmiId')
+                instance_type = parameters.get('InstanceType', 't2.micro')
+                subnet_id = parameters.get('SubnetId')
+                security_group_ids = parameters.get('SecurityGroupIds', [])
+                tags = parameters.get('Tags', [])
+                
+                if not ami_id or not subnet_id:
+                    return {'Status': 'Failed', 'Error': "Missing required parameters: AmiId or SubnetId"}
+                    
+                # Launch the instance
+                response = ec2.run_instances(
+                    ImageId=ami_id,
+                    InstanceType=instance_type,
+                    MinCount=1,
+                    MaxCount=1,
+                    SubnetId=subnet_id,
+                    SecurityGroupIds=security_group_ids if security_group_ids else None,
+                    TagSpecifications=[
+                        {
+                            'ResourceType': 'instance',
+                            'Tags': tags
+                        }
+                    ] if tags else []
+                )
+                
+                instance_id = response['Instances'][0]['InstanceId']
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': 'EC2',
+                    'ResourceId': instance_id,
+                    'Details': {
+                        'InstanceType': instance_type,
+                        'State': response['Instances'][0]['State']['Name']
+                    }
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def create_s3_bucket(session, parameters):
+            """Create S3 bucket in the target account."""
+            try:
+                s3 = session.client('s3')
+                
+                # Extract required parameters
+                bucket_name = parameters.get('BucketName')
+                region = session.region_name
+                tags = parameters.get('Tags', [])
+                
+                if not bucket_name:
+                    return {'Status': 'Failed', 'Error': "Missing required parameter: BucketName"}
+                    
+                # Create the bucket
+                if region == 'us-east-1':
+                    response = s3.create_bucket(Bucket=bucket_name)
+                else:
+                    response = s3.create_bucket(
+                        Bucket=bucket_name,
+                        CreateBucketConfiguration={'LocationConstraint': region}
+                    )
+                
+                # Apply tags if provided
+                if tags:
+                    s3.put_bucket_tagging(
+                        Bucket=bucket_name,
+                        Tagging={'TagSet': tags}
+                    )
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': 'S3',
+                    'ResourceId': bucket_name,
+                    'Details': {
+                        'BucketName': bucket_name,
+                        'Region': region
+                    }
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def create_rds_instance(session, parameters):
+            """Create RDS instance in the target account."""
+            try:
+                rds = session.client('rds')
+                
+                # Extract required parameters
+                db_instance_identifier = parameters.get('DBInstanceIdentifier')
+                engine = parameters.get('Engine', 'mysql')
+                db_instance_class = parameters.get('DBInstanceClass', 'db.t3.micro')
+                allocated_storage = parameters.get('AllocatedStorage', 20)
+                master_username = parameters.get('MasterUsername', 'admin')
+                master_password = parameters.get('MasterPassword')
+                subnet_group_name = parameters.get('DBSubnetGroupName')
+                tags = parameters.get('Tags', [])
+                
+                if not db_instance_identifier or not master_password or not subnet_group_name:
+                    return {'Status': 'Failed', 'Error': "Missing required parameters: DBInstanceIdentifier, MasterPassword, or DBSubnetGroupName"}
+                    
+                # Create the RDS instance
+                response = rds.create_db_instance(
+                    DBInstanceIdentifier=db_instance_identifier,
+                    AllocatedStorage=allocated_storage,
+                    DBInstanceClass=db_instance_class,
+                    Engine=engine,
+                    MasterUsername=master_username,
+                    MasterUserPassword=master_password,
+                    DBSubnetGroupName=subnet_group_name,
+                    Tags=tags
+                )
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': 'RDS',
+                    'ResourceId': db_instance_identifier,
+                    'Details': {
+                        'Engine': engine,
+                        'DBInstanceClass': db_instance_class
+                    }
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def create_iam_role(session, parameters):
+            """Create IAM role in the target account."""
+            try:
+                iam = session.client('iam')
+                
+                # Extract required parameters
+                role_name = parameters.get('RoleName')
+                assume_role_policy = parameters.get('AssumeRolePolicy')
+                managed_policy_arns = parameters.get('ManagedPolicyArns', [])
+                tags = parameters.get('Tags', [])
+                
+                if not role_name or not assume_role_policy:
+                    return {'Status': 'Failed', 'Error': "Missing required parameters: RoleName or AssumeRolePolicy"}
+                    
+                # Create the IAM role
+                response = iam.create_role(
+                    RoleName=role_name,
+                    AssumeRolePolicyDocument=json.dumps(assume_role_policy) if isinstance(assume_role_policy, dict) else assume_role_policy,
+                    Tags=tags
+                )
+                
+                # Attach managed policies if provided
+                for policy_arn in managed_policy_arns:
+                    iam.attach_role_policy(
+                        RoleName=role_name,
+                        PolicyArn=policy_arn
+                    )
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': 'IAMRole',
+                    'ResourceId': role_name,
+                    'Details': {
+                        'RoleName': role_name,
+                        'AttachedPolicies': managed_policy_arns
+                    }
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def tag_resources(session, resource_type, parameters, tag_key, tag_value):
+            """Tag resources in the target account."""
+            try:
+                # Get the resource IDs to tag
+                resource_ids = parameters.get('ResourceIds', [])
+                
+                if not resource_ids:
+                    return {'Status': 'Failed', 'Error': "Missing required parameter: ResourceIds"}
+                    
+                # Tag resources based on resource type
+                if resource_type == 'EC2':
+                    ec2 = session.client('ec2')
+                    ec2.create_tags(
+                        Resources=resource_ids,
+                        Tags=[{'Key': tag_key, 'Value': tag_value}]
+                    )
+                elif resource_type == 'S3':
+                    s3 = session.client('s3')
+                    for bucket_name in resource_ids:
+                        s3.put_bucket_tagging(
+                            Bucket=bucket_name,
+                            Tagging={
+                                'TagSet': [{'Key': tag_key, 'Value': tag_value}]
+                            }
+                        )
+                elif resource_type == 'RDS':
+                    rds = session.client('rds')
+                    for db_instance_id in resource_ids:
+                        arn = f"arn:aws:rds:{session.region_name}:{get_account_id(session)}:db:{db_instance_id}"
+                        rds.add_tags_to_resource(
+                            ResourceName=arn,
+                            Tags=[{'Key': tag_key, 'Value': tag_value}]
+                        )
+                else:
+                    return {'Status': 'Failed', 'Error': f"Unsupported resource type for tagging: {resource_type}"}
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': resource_type,
+                    'ResourceIds': resource_ids,
+                    'Details': {
+                        'TagKey': tag_key,
+                        'TagValue': tag_value
+                    }
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def inventory_resources(session, resource_type):
+            """Inventory resources in the target account."""
+            try:
+                resources = []
+                
+                # Inventory different resource types
+                if not resource_type or resource_type == 'EC2':
+                    resources.extend(inventory_ec2_instances(session))
+                
+                if not resource_type or resource_type == 'S3':
+                    resources.extend(inventory_s3_buckets(session))
+                
+                if not resource_type or resource_type == 'RDS':
+                    resources.extend(inventory_rds_instances(session))
+                
+                if not resource_type or resource_type == 'SecurityGroup':
+                    resources.extend(inventory_security_groups(session))
+                    
+                return {
+                    'Status': 'Success',
+                    'ResourceCount': len(resources),
+                    'Resources': resources
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def inventory_ec2_instances(session):
+            """Inventory EC2 instances in the target account."""
+            ec2 = session.client('ec2')
+            instances = []
+            
+            response = ec2.describe_instances()
+            
+            for reservation in response.get('Reservations', []):
+                for instance in reservation.get('Instances', []):
+                    instances.append({
+                        'ResourceType': 'EC2',
+                        'ResourceId': instance.get('InstanceId'),
+                        'Tags': instance.get('Tags', []),
+                        'State': instance.get('State', {}).get('Name'),
+                        'InstanceType': instance.get('InstanceType'),
+                        'LaunchTime': instance.get('LaunchTime').isoformat() if instance.get('LaunchTime') else None
+                    })
+            
+            return instances
+            
+        def inventory_s3_buckets(session):
+            """Inventory S3 buckets in the target account."""
+            s3 = session.client('s3')
+            buckets = []
+            
+            response = s3.list_buckets()
+            
+            for bucket in response.get('Buckets', []):
+                try:
+                    # Get bucket location
+                    location = s3.get_bucket_location(Bucket=bucket['Name'])
+                    region = location.get('LocationConstraint', 'us-east-1')
+                    
+                    # Get bucket tags
+                    try:
+                        tags_response = s3.get_bucket_tagging(Bucket=bucket['Name'])
+                        tags = tags_response.get('TagSet', [])
+                    except:
+                        tags = []
+                    
+                    buckets.append({
+                        'ResourceType': 'S3',
+                        'ResourceId': bucket['Name'],
+                        'Tags': tags,
+                        'Region': region,
+                        'CreationDate': bucket.get('CreationDate').isoformat() if bucket.get('CreationDate') else None
+                    })
+                except Exception as e:
+                    logger.error(f"Error getting details for bucket {bucket['Name']}: {str(e)}")
+            
+            return buckets
+            
+        def inventory_rds_instances(session):
+            """Inventory RDS instances in the target account."""
+            rds = session.client('rds')
+            instances = []
+            
+            response = rds.describe_db_instances()
+            
+            for instance in response.get('DBInstances', []):
+                try:
+                    # Get instance tags
+                    arn = instance.get('DBInstanceArn')
+                    tags_response = rds.list_tags_for_resource(ResourceName=arn)
+                    tags = tags_response.get('TagList', [])
+                    
+                    instances.append({
+                        'ResourceType': 'RDS',
+                        'ResourceId': instance.get('DBInstanceIdentifier'),
+                        'Tags': tags,
+                        'Engine': instance.get('Engine'),
+                        'InstanceClass': instance.get('DBInstanceClass'),
+                        'Status': instance.get('DBInstanceStatus')
+                    })
+                except Exception as e:
+                    logger.error(f"Error getting details for RDS instance {instance.get('DBInstanceIdentifier')}: {str(e)}")
+            
+            return instances
+            
+        def inventory_security_groups(session):
+            """Inventory security groups in the target account."""
+            ec2 = session.client('ec2')
+            security_groups = []
+            
+            response = ec2.describe_security_groups()
+            
+            for sg in response.get('SecurityGroups', []):
+                security_groups.append({
+                    'ResourceType': 'SecurityGroup',
+                    'ResourceId': sg.get('GroupId'),
+                    'Name': sg.get('GroupName'),
+                    'VpcId': sg.get('VpcId'),
+                    'Description': sg.get('Description'),
+                    'Tags': sg.get('Tags', [])
+                })
+            
+            return security_groups
+            
+        def update_security_groups(session, parameters):
+            """Update security groups in the target account."""
+            try:
+                ec2 = session.client('ec2')
+                
+                # Extract required parameters
+                security_group_ids = parameters.get('SecurityGroupIds', [])
+                ingress_rules = parameters.get('IngressRules', [])
+                egress_rules = parameters.get('EgressRules', [])
+                revoke_ingress = parameters.get('RevokeIngress', [])
+                revoke_egress = parameters.get('RevokeEgress', [])
+                
+                if not security_group_ids:
+                    return {'Status': 'Failed', 'Error': "Missing required parameter: SecurityGroupIds"}
+                    
+                results = []
+                
+                for sg_id in security_group_ids:
+                    sg_result = {'SecurityGroupId': sg_id, 'Changes': []}
+                    
+                    # Add ingress rules
+                    if ingress_rules:
+                        try:
+                            ec2.authorize_security_group_ingress(
+                                GroupId=sg_id,
+                                IpPermissions=ingress_rules
+                            )
+                            sg_result['Changes'].append('Added ingress rules')
+                        except ClientError as e:
+                            if 'InvalidPermission.Duplicate' in str(e):
+                                sg_result['Changes'].append('Ingress rules already exist')
+                            else:
+                                sg_result['Changes'].append(f"Error adding ingress rules: {str(e)}")
+                    
+                    # Add egress rules
+                    if egress_rules:
+                        try:
+                            ec2.authorize_security_group_egress(
+                                GroupId=sg_id,
+                                IpPermissions=egress_rules
+                            )
+                            sg_result['Changes'].append('Added egress rules')
+                        except ClientError as e:
+                            if 'InvalidPermission.Duplicate' in str(e):
+                                sg_result['Changes'].append('Egress rules already exist')
+                            else:
+                                sg_result['Changes'].append(f"Error adding egress rules: {str(e)}")
+                    
+                    # Revoke ingress rules
+                    if revoke_ingress:
+                        try:
+                            ec2.revoke_security_group_ingress(
+                                GroupId=sg_id,
+                                IpPermissions=revoke_ingress
+                            )
+                            sg_result['Changes'].append('Revoked ingress rules')
+                        except Exception as e:
+                            sg_result['Changes'].append(f"Error revoking ingress rules: {str(e)}")
+                    
+                    # Revoke egress rules
+                    if revoke_egress:
+                        try:
+                            ec2.revoke_security_group_egress(
+                                GroupId=sg_id,
+                                IpPermissions=revoke_egress
+                            )
+                            sg_result['Changes'].append('Revoked egress rules')
+                        except Exception as e:
+                            sg_result['Changes'].append(f"Error revoking egress rules: {str(e)}")
+                    
+                    results.append(sg_result)
+                
+                return {
+                    'Status': 'Success',
+                    'ResourceType': 'SecurityGroup',
+                    'ResourceIds': security_group_ids,
+                    'Results': results
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+                
+        def patch_instances(session, parameters):
+            """Patch EC2 instances in the target account."""
+            try:
+                ssm = session.client('ssm')
+                
+                # Extract required parameters
+                instance_ids = parameters.get('InstanceIds', [])
+                patch_baseline = parameters.get('PatchBaseline', 'AWS-DefaultPatchBaseline')
+                reboot_option = parameters.get('RebootOption', 'RebootIfNeeded')
+                
+                if not instance_ids:
+                    return {'Status': 'Failed', 'Error': "Missing required parameter: InstanceIds"}
+                    
+                # Verify instances are managed by SSM
+                managed_instances = []
+                response = ssm.describe_instance_information()
+                
+                for instance in response.get('InstanceInformationList', []):
+                    if instance.get('InstanceId') in instance_ids:
+                        managed_instances.append(instance.get('InstanceId'))
+                
+                if not managed_instances:
+                    return {'Status': 'Failed', 'Error': "None of the specified instances are managed by SSM"}
+                    
+                # Start patch operation
+                response = ssm.send_command(
+                    InstanceIds=managed_instances,
+                    DocumentName='AWS-RunPatchBaseline',
+                    Parameters={
+                        'Operation': ['Install'],
+                        'RebootOption': [reboot_option]
+                    }
+                )
+                
+                command_id = response['Command']['CommandId']
+                
+                # Wait for command to complete (with timeout)
+                max_wait_time = 300  # 5 minutes
+                wait_time = 0
+                interval = 10
+                
+                while wait_time < max_wait_time:
+                    time.sleep(interval)
+                    wait_time += interval
+                    
+                    try:
+                        command_result = ssm.list_command_invocations(
+                            CommandId=command_id,
+                            Details=True
+                        )
+                        
+                        all_completed = True
+                        results = []
+                        
+                        for invocation in command_result.get('CommandInvocations', []):
+                            status = invocation.get('Status')
+                            instance_id = invocation.get('InstanceId')
+                            
+                            if status not in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                                all_completed = False
+                            
+                            results.append({
+                                'InstanceId': instance_id,
+                                'Status': status
+                            })
+                        
+                        if all_completed:
+                            return {
+                                'Status': 'Success',
+                                'ResourceType': 'EC2',
+                                'CommandId': command_id,
+                                'InstanceResults': results
+                            }
+                    except Exception as e:
+                        logger.error(f"Error checking command status: {str(e)}")
+                
+                # If we get here, the command didn't complete within the timeout
+                return {
+                    'Status': 'InProgress',
+                    'ResourceType': 'EC2',
+                    'CommandId': command_id,
+                    'Message': "Patching operation still in progress. Check AWS Systems Manager for final status."
+                }
+                
+            except Exception as e:
+                return {'Status': 'Failed', 'Error': str(e)}
+        
+        def get_account_id(session):
+            """Get account ID from the session."""
+            sts = session.client('sts')
+            return sts.get_caller_identity()['Account']
+            
+        def send_notification(topic_arn, results):
+            """Send notification of operation results."""
+            try:
+                sns = boto3.client('sns')
+                
+                # Create a summary message
+                message = f"""
+                Cross-Account Resource Management Operation Summary
+                
+                Operation: {results.get('Operation')}
+                Accounts Processed: {results.get('AccountsProcessed')}
+                Successful Operations: {results.get('SuccessfulOperations')}
+                Failed Operations: {results.get('FailedOperations')}
+                Regions Processed: {results.get('RegionsProcessed')}
+                
+                Account Results:
+                """
+                
+                for account_result in results.get('AccountResults', []):
+                    message += f"\n- Account {account_result.get('AccountId')}: {account_result.get('Status')}"
+                
+                sns.publish(
+                    TopicArn=topic_arn,
+                    Subject=f"Cross-Account Operation: {results.get('Operation')} - {results.get('SuccessfulOperations')}/{results.get('AccountsProcessed')} Successful",
+                    Message=message
+                )
+                
+                return True
+            except Exception as e:
+                logger.error(f"Error sending notification: {str(e)}")
+                return False
+      InputPayload:
+        Operation: '{{ Operation }}'
+        TargetAccounts: '{{ TargetAccounts }}'
+        TargetRegions: '{{ TargetRegions }}'
+        CrossAccountRoleName: '{{ CrossAccountRoleName }}'
+        ResourceType: '{{ ResourceType }}'
+        ResourceParameters: '{{ ResourceParameters }}'
+        TagKey: '{{ TagKey }}'
+        TagValue: '{{ TagValue }}'
+        MaxConcurrentAccounts: '{{ MaxConcurrentAccounts }}'
+        NotificationTopicArn: '{{ NotificationTopicArn }}'
+    outputs:
+      - Name: ResultSummary
+        Selector: $.Payload
+        Type: StringMap
+    isEnd: true
