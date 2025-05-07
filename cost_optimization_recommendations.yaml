@@ -55,7 +55,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Continue
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: find_optimization_opportunities
       Script: |-
         import boto3
@@ -594,7 +594,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Continue
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: generate_report_and_notify
       Script: |-
         import boto3

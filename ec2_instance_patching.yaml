@@ -34,7 +34,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Abort
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: check_instances
       Script: |-
         import boto3
@@ -101,7 +101,7 @@ mainSteps:
   - name: VerifyPatching
     action: aws:executeScript
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: verify_patching
       Script: |-
         import boto3

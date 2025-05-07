@@ -51,7 +51,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Abort
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: create_resource
       Script: |-
         import boto3

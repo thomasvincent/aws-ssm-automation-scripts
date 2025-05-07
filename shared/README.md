@@ -49,6 +49,12 @@ Security-related helper functions for SSM automation documents:
 - `check_cloudtrail_status()`: Check CloudTrail status and configuration
 - `check_root_account_mfa()`: Check if the root account has MFA enabled
 
+## Requirements
+
+- Python 3.10 or later
+- AWS SDK for Python (boto3)
+- SSM Automation Document Schema Version 0.3
+
 ## Using Shared Modules in SSM Documents
 
 To use these shared modules in your SSM automation documents, you have several options:

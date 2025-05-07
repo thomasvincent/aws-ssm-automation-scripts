@@ -47,7 +47,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Abort
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: audit_security_groups
       Script: |-
         import boto3
@@ -231,7 +231,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Continue
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: generate_report
       Script: |-
         import json
