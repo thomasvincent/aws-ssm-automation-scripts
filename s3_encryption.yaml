@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
@@ -27,7 +28,7 @@ mainSteps:
       - Name: BucketExists
         Selector: $
         Type: Boolean
-        
+
   - name: EnableBucketEncryption
     action: aws:executeAwsApi
     onFailure: Abort
@@ -44,7 +45,7 @@ mainSteps:
       - Name: Status
         Selector: $.ResponseMetadata.HTTPStatusCode
         Type: Integer
-        
+
   - name: VerifyEncryptionEnabled
     action: aws:executeAwsApi
     onFailure: Continue

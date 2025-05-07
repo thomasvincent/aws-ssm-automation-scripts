@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
@@ -78,7 +79,7 @@ mainSteps:
       - Name: WindowId
         Selector: $.WindowId
         Type: String
-        
+
   - name: RegisterTarget
     action: aws:executeScript
     onFailure: Abort
@@ -87,15 +88,15 @@ mainSteps:
       Handler: register_target
       Script: |-
         import boto3
-        
+
         def register_target(events, context):
             """
             Registers targets with the maintenance window based on target type.
-            
+
             Args:
                 events (dict): Input parameters including WindowId, TargetType, TargetKey, TargetValue
                 context: Lambda context (not used)
-                
+
             Returns:
                 dict: Results of target registration
             """
@@ -104,9 +105,9 @@ mainSteps:
             target_type = events['TargetType']
             target_key = events['TargetKey']
             target_values = events['TargetValue']
-            
+
             targets = []
-            
+
             if target_type == 'INSTANCE':
                 # For instance type, the key contains comma-separated instance IDs
                 instance_ids = [id.strip() for id in target_key.split(',')]
@@ -132,14 +133,14 @@ mainSteps:
                         'Values': target_values
                     }
                 ]
-            
+
             response = ssm.register_target_with_maintenance_window(
                 WindowId=window_id,
                 ResourceType=target_type,
                 Targets=targets,
                 OwnerInformation=f"Registered by SSM Automation at {boto3.client('sts').get_caller_identity()['Arn']}"
             )
-            
+
             return {
                 'WindowTargetId': response['WindowTargetId'],
                 'WindowId': window_id,
@@ -154,7 +155,7 @@ mainSteps:
       - Name: WindowTargetId
         Selector: $.Payload.WindowTargetId
         Type: String
-        
+
   - name: RegisterTask
     action: aws:executeScript
     onFailure: Abort
@@ -164,16 +165,16 @@ mainSteps:
       Script: |-
         import boto3
         import json
-        
+
         def register_task(events, context):
             """
             Registers a task with the maintenance window.
-            
+
             Args:
-                events (dict): Input parameters including WindowId, WindowTargetId, TaskType, 
+                events (dict): Input parameters including WindowId, WindowTargetId, TaskType,
                               TaskDocumentName, TaskParameters, ServiceRoleArn
                 context: Lambda context (not used)
-                
+
             Returns:
                 dict: Results of task registration
             """
@@ -184,7 +185,7 @@ mainSteps:
             document_name = events['TaskDocumentName']
             parameters = events['TaskParameters']
             service_role_arn = events['ServiceRoleArn']
-            
+
             # Convert parameters to the format expected by SSM
             formatted_parameters = {}
             for key, value in parameters.items():
@@ -192,7 +193,7 @@ mainSteps:
                     formatted_parameters[key] = value
                 else:
                     formatted_parameters[key] = [value]
-            
+
             response = ssm.register_task_with_maintenance_window(
                 WindowId=window_id,
                 WindowTaskId=f"{document_name.replace(':', '-')}-task",
@@ -212,7 +213,7 @@ mainSteps:
                     }
                 ]
             )
-            
+
             return {
                 'WindowTaskId': response['WindowTaskId'],
                 'WindowId': window_id,
@@ -230,7 +231,7 @@ mainSteps:
       - Name: WindowTaskId
         Selector: $.Payload.WindowTaskId
         Type: String
-        
+
   - name: VerifyMaintenanceWindow
     action: aws:executeAwsApi
     onFailure: Continue

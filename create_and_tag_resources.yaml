@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2024 Thomas Vincent
 # SPDX-License-Identifier: MIT
 
@@ -57,22 +58,22 @@ mainSteps:
         import boto3
         import json
         import time
-        
+
         def create_resource(events, context):
             """
             Creates an AWS resource based on the specified resource type and parameters.
-            
+
             Args:
                 events (dict): Input parameters
                 context: Lambda context (not used)
-                
+
             Returns:
                 dict: Created resource details
             """
             resource_type = events['ResourceType']
             resource_name = events['ResourceName']
             resource_params = events['ResourceParameters']
-            
+
             # Define standard tags
             standard_tags = [
                 {'Key': 'Name', 'Value': resource_name},
@@ -84,13 +85,13 @@ mainSteps:
                 {'Key': 'CreatedBy', 'Value': 'SSM-Automation'},
                 {'Key': 'CreatedDate', 'Value': time.strftime('%Y-%m-%d')}
             ]
-            
+
             # Add additional tags
             for key, value in events['AdditionalTags'].items():
                 standard_tags.append({'Key': key, 'Value': value})
-            
+
             result = {}
-            
+
             if resource_type == 'S3':
                 return create_s3_bucket(resource_name, resource_params, standard_tags)
             elif resource_type == 'EC2':
@@ -99,12 +100,12 @@ mainSteps:
                 return create_rds_instance(resource_name, resource_params, standard_tags)
             else:
                 raise ValueError(f"Unsupported resource type: {resource_type}")
-        
+
         def create_s3_bucket(bucket_name, params, tags):
             """Create and tag an S3 bucket"""
             s3 = boto3.client('s3')
             region = params.get('Region', 'us-east-1')
-            
+
             # Create the bucket
             if region == 'us-east-1':
                 response = s3.create_bucket(Bucket=bucket_name)
@@ -113,23 +114,23 @@ mainSteps:
                     Bucket=bucket_name,
                     CreateBucketConfiguration={'LocationConstraint': region}
                 )
-            
+
             # Convert tags to S3 format
             s3_tags = {'TagSet': tags}
-            
+
             # Apply tags
             s3.put_bucket_tagging(
                 Bucket=bucket_name,
                 Tagging=s3_tags
             )
-            
+
             # Apply versioning if specified
             if params.get('EnableVersioning', False):
                 s3.put_bucket_versioning(
                     Bucket=bucket_name,
                     VersioningConfiguration={'Status': 'Enabled'}
                 )
-            
+
             return {
                 'ResourceType': 'S3',
                 'ResourceId': bucket_name,
@@ -140,20 +141,20 @@ mainSteps:
                     'CreationDate': response.get('CreationDate', '').isoformat() if hasattr(response.get('CreationDate', ''), 'isoformat') else str(response.get('CreationDate', ''))
                 }
             }
-        
+
         def create_ec2_instance(instance_name, params, tags):
             """Create and tag an EC2 instance"""
             ec2 = boto3.client('ec2')
-            
+
             # Extract required parameters
             ami_id = params.get('AmiId')
             instance_type = params.get('InstanceType', 't2.micro')
             subnet_id = params.get('SubnetId')
             security_group_ids = params.get('SecurityGroupIds', [])
-            
+
             if not ami_id or not subnet_id:
                 raise ValueError("AmiId and SubnetId are required parameters for EC2 instances")
-            
+
             # Launch the instance
             response = ec2.run_instances(
                 ImageId=ami_id,
@@ -169,17 +170,17 @@ mainSteps:
                     }
                 ]
             )
-            
+
             instance_id = response['Instances'][0]['InstanceId']
-            
+
             # Wait for the instance to be running
             waiter = ec2.get_waiter('instance_running')
             waiter.wait(InstanceIds=[instance_id])
-            
+
             # Get instance details
             instance_info = ec2.describe_instances(InstanceIds=[instance_id])
             instance = instance_info['Reservations'][0]['Instances'][0]
-            
+
             return {
                 'ResourceType': 'EC2',
                 'ResourceId': instance_id,
@@ -193,11 +194,11 @@ mainSteps:
                     'PublicIpAddress': instance.get('PublicIpAddress', '')
                 }
             }
-        
+
         def create_rds_instance(db_name, params, tags):
             """Create and tag an RDS instance"""
             rds = boto3.client('rds')
-            
+
             # Extract required parameters
             db_instance_identifier = db_name.lower().replace(' ', '-')
             db_instance_class = params.get('DBInstanceClass', 'db.t3.micro')
@@ -207,10 +208,10 @@ mainSteps:
             master_password = params.get('MasterPassword')
             vpc_security_group_ids = params.get('VpcSecurityGroupIds', [])
             db_subnet_group_name = params.get('DBSubnetGroupName')
-            
+
             if not master_password or not db_subnet_group_name:
                 raise ValueError("MasterPassword and DBSubnetGroupName are required parameters for RDS instances")
-            
+
             # Convert tags to RDS format
             rds_tags = []
             for tag in tags:
@@ -218,7 +219,7 @@ mainSteps:
                     'Key': tag['Key'],
                     'Value': tag['Value']
                 })
-            
+
             # Create the RDS instance
             response = rds.create_db_instance(
                 DBInstanceIdentifier=db_instance_identifier,
@@ -231,9 +232,9 @@ mainSteps:
                 DBSubnetGroupName=db_subnet_group_name,
                 Tags=rds_tags
             )
-            
+
             db_instance = response['DBInstance']
-            
+
             return {
                 'ResourceType': 'RDS',
                 'ResourceId': db_instance_identifier,
