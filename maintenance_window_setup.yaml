@@ -83,7 +83,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Abort
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: register_target
       Script: |-
         import boto3
@@ -159,7 +159,7 @@ mainSteps:
     action: aws:executeScript
     onFailure: Abort
     inputs:
-      Runtime: python3.8
+      Runtime: python3.10
       Handler: register_task
       Script: |-
         import boto3
