@@ -1,0 +1,59 @@
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Enables server-side encryption on an S3 bucket using a KMS key
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  BucketName:
+    type: String
+    description: (Required) The name of the S3 Bucket to enable encryption on.
+  KMSMasterKey:
+    type: String
+    description: (Required) The ARN of the KMS customer master key (CMK) to use for the default encryption.
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: VerifyBucketExists
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: s3
+      Api: HeadBucket
+      Bucket: "{{ BucketName }}"
+    outputs:
+      - Name: BucketExists
+        Selector: $
+        Type: Boolean
+        
+  - name: EnableBucketEncryption
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: s3
+      Api: PutBucketEncryption
+      Bucket: "{{ BucketName }}"
+      ServerSideEncryptionConfiguration:
+        Rules:
+          - ApplyServerSideEncryptionByDefault:
+              SSEAlgorithm: "aws:kms"
+              KMSMasterKeyID: "{{ KMSMasterKey }}"
+    outputs:
+      - Name: Status
+        Selector: $.ResponseMetadata.HTTPStatusCode
+        Type: Integer
+        
+  - name: VerifyEncryptionEnabled
+    action: aws:executeAwsApi
+    onFailure: Continue
+    inputs:
+      Service: s3
+      Api: GetBucketEncryption
+      Bucket: "{{ BucketName }}"
+    outputs:
+      - Name: EncryptionConfiguration
+        Selector: $.ServerSideEncryptionConfiguration
+        Type: StringMap
+    isEnd: true
