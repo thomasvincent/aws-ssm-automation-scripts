@@ -1,0 +1,356 @@
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Audits and remediates security groups for public access and best practices
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  SecurityGroupIds:
+    type: StringList
+    description: (Optional) List of security group IDs to audit. If not provided, all security groups in the account will be audited.
+    default: []
+  VpcIds:
+    type: StringList
+    description: (Optional) List of VPC IDs to audit security groups in. If not provided, security groups in all VPCs will be audited.
+    default: []
+  RemediationMode:
+    type: String
+    description: (Optional) The remediation mode to use. Audit will only report issues, Remediate will fix them.
+    default: Audit
+    allowedValues:
+      - Audit
+      - Remediate
+  RemediateOpenPorts:
+    type: StringList
+    description: (Optional) List of ports to remediate if open to 0.0.0.0/0. Default is common high-risk ports.
+    default: 
+      - "22"
+      - "3389"
+      - "5432"
+      - "3306"
+      - "1433"
+      - "27017"
+      - "6379"
+      - "9200"
+      - "8080"
+      - "8443"
+  ExcludedSecurityGroups:
+    type: StringList
+    description: (Optional) List of security group IDs to exclude from remediation.
+    default: []
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: AuditSecurityGroups
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.8
+      Handler: audit_security_groups
+      Script: |-
+        import boto3
+        import json
+        import ipaddress
+        
+        def audit_security_groups(events, context):
+            """
+            Audits security groups for public access and best practices.
+            
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+                
+            Returns:
+                dict: Audit results
+            """
+            ec2 = boto3.client('ec2')
+            
+            # Get parameters
+            security_group_ids = events.get('SecurityGroupIds', [])
+            vpc_ids = events.get('VpcIds', [])
+            remediate_ports = events.get('RemediateOpenPorts', [])
+            excluded_sg_ids = events.get('ExcludedSecurityGroups', [])
+            remediation_mode = events.get('RemediationMode', 'Audit')
+            
+            # Convert string ports to integers for comparison
+            remediate_ports = [int(port) for port in remediate_ports]
+            
+            # Get security groups
+            if security_group_ids:
+                response = ec2.describe_security_groups(GroupIds=security_group_ids)
+            elif vpc_ids:
+                response = ec2.describe_security_groups(Filters=[{'Name': 'vpc-id', 'Values': vpc_ids}])
+            else:
+                response = ec2.describe_security_groups()
+            
+            security_groups = response['SecurityGroups']
+            
+            # Initialize results
+            results = {
+                'SecurityGroupsAudited': len(security_groups),
+                'SecurityGroupsWithIssues': 0,
+                'SecurityGroupsRemediated': 0,
+                'AuditResults': []
+            }
+            
+            # Audit each security group
+            for sg in security_groups:
+                sg_id = sg['GroupId']
+                sg_name = sg['GroupName']
+                vpc_id = sg.get('VpcId', 'default')
+                
+                # Skip excluded security groups
+                if sg_id in excluded_sg_ids:
+                    results['AuditResults'].append({
+                        'SecurityGroupId': sg_id,
+                        'SecurityGroupName': sg_name,
+                        'VpcId': vpc_id,
+                        'Status': 'Excluded',
+                        'Issues': [],
+                        'Remediations': []
+                    })
+                    continue
+                
+                issues = []
+                remediations = []
+                
+                # Check ingress rules
+                for rule in sg.get('IpPermissions', []):
+                    from_port = rule.get('FromPort', 0)
+                    to_port = rule.get('ToPort', 65535)
+                    ip_protocol = rule.get('IpProtocol', '-1')
+                    
+                    # Check IP ranges for public access
+                    for ip_range in rule.get('IpRanges', []):
+                        cidr = ip_range.get('CidrIp', '')
+                        
+                        # Check if this is a public CIDR
+                        if is_public_cidr(cidr):
+                            # Check if specific ports are open that should be remediated
+                            if from_port in remediate_ports or to_port in remediate_ports or (from_port <= min(remediate_ports) and to_port >= max(remediate_ports)):
+                                issue = {
+                                    'Type': 'PublicAccess',
+                                    'FromPort': from_port,
+                                    'ToPort': to_port,
+                                    'IpProtocol': ip_protocol,
+                                    'Cidr': cidr,
+                                    'Description': f"Public access ({cidr}) allowed to {ip_protocol.upper()} port(s) {from_port if from_port == to_port else f'{from_port}-{to_port}'}"
+                                }
+                                issues.append(issue)
+                                
+                                # Prepare remediation action if in remediate mode
+                                if remediation_mode == 'Remediate':
+                                    remediation = {
+                                        'Action': 'RevokeIngress',
+                                        'FromPort': from_port,
+                                        'ToPort': to_port,
+                                        'IpProtocol': ip_protocol,
+                                        'CidrIp': cidr
+                                    }
+                                    remediations.append(remediation)
+                
+                # Apply remediations if needed
+                if remediation_mode == 'Remediate' and remediations:
+                    for remediation in remediations:
+                        try:
+                            if remediation['Action'] == 'RevokeIngress':
+                                ec2.revoke_security_group_ingress(
+                                    GroupId=sg_id,
+                                    IpPermissions=[{
+                                        'IpProtocol': remediation['IpProtocol'],
+                                        'FromPort': remediation['FromPort'],
+                                        'ToPort': remediation['ToPort'],
+                                        'IpRanges': [{'CidrIp': remediation['CidrIp']}]
+                                    }]
+                                )
+                        except Exception as e:
+                            remediation['Error'] = str(e)
+                
+                # Add results for this security group
+                sg_result = {
+                    'SecurityGroupId': sg_id,
+                    'SecurityGroupName': sg_name,
+                    'VpcId': vpc_id,
+                    'Status': 'Clean' if not issues else ('Remediated' if remediation_mode == 'Remediate' and remediations and not any('Error' in r for r in remediations) else 'HasIssues'),
+                    'Issues': issues,
+                    'Remediations': remediations
+                }
+                results['AuditResults'].append(sg_result)
+                
+                # Update summary counts
+                if issues:
+                    results['SecurityGroupsWithIssues'] += 1
+                
+                if remediation_mode == 'Remediate' and remediations and not any('Error' in r for r in remediations):
+                    results['SecurityGroupsRemediated'] += 1
+            
+            return results
+        
+        def is_public_cidr(cidr):
+            """Check if a CIDR represents a public IP range"""
+            if not cidr:
+                return False
+                
+            # Check if it's 0.0.0.0/0 or similar public range
+            if cidr == '0.0.0.0/0' or cidr == '::/0':
+                return True
+                
+            try:
+                network = ipaddress.ip_network(cidr)
+                
+                # Check if it's not a private/reserved range
+                if not network.is_private and not network.is_reserved:
+                    return True
+            except ValueError:
+                pass
+                
+            return False
+      InputPayload:
+        SecurityGroupIds: '{{ SecurityGroupIds }}'
+        VpcIds: '{{ VpcIds }}'
+        RemediationMode: '{{ RemediationMode }}'
+        RemediateOpenPorts: '{{ RemediateOpenPorts }}'
+        ExcludedSecurityGroups: '{{ ExcludedSecurityGroups }}'
+    outputs:
+      - Name: SecurityGroupsAudited
+        Selector: $.Payload.SecurityGroupsAudited
+        Type: Integer
+      - Name: SecurityGroupsWithIssues
+        Selector: $.Payload.SecurityGroupsWithIssues
+        Type: Integer
+      - Name: SecurityGroupsRemediated
+        Selector: $.Payload.SecurityGroupsRemediated
+        Type: Integer
+      - Name: AuditResults
+        Selector: $.Payload.AuditResults
+        Type: StringMap
+  
+  - name: GenerateReport
+    action: aws:executeScript
+    onFailure: Continue
+    inputs:
+      Runtime: python3.8
+      Handler: generate_report
+      Script: |-
+        import json
+        import boto3
+        from datetime import datetime
+        
+        def generate_report(events, context):
+            """
+            Generates an HTML report of the security group audit results.
+            
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+                
+            Returns:
+                dict: Report details
+            """
+            audit_results = events['AuditResults']
+            sg_audited = events['SecurityGroupsAudited']
+            sg_with_issues = events['SecurityGroupsWithIssues']
+            sg_remediated = events['SecurityGroupsRemediated']
+            
+            # Generate HTML report
+            html_report = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Security Group Audit Report</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    h1, h2 {{ color: #0066cc; }}
+                    table {{ border-collapse: collapse; width: 100%; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; }}
+                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                    .clean {{ color: green; }}
+                    .issues {{ color: red; }}
+                    .remediated {{ color: orange; }}
+                    .excluded {{ color: gray; }}
+                    .summary {{ background-color: #f0f0f0; padding: 15px; margin-bottom: 20px; }}
+                </style>
+            </head>
+            <body>
+                <h1>Security Group Audit Report</h1>
+                <div class="summary">
+                    <p><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p><strong>Security Groups Audited:</strong> {sg_audited}</p>
+                    <p><strong>Security Groups with Issues:</strong> {sg_with_issues}</p>
+                    <p><strong>Security Groups Remediated:</strong> {sg_remediated}</p>
+                </div>
+                
+                <h2>Detailed Results</h2>
+                <table>
+                    <tr>
+                        <th>Security Group ID</th>
+                        <th>Name</th>
+                        <th>VPC ID</th>
+                        <th>Status</th>
+                        <th>Issues</th>
+                    </tr>
+            """
+            
+            for result in audit_results:
+                sg_id = result['SecurityGroupId']
+                sg_name = result['SecurityGroupName']
+                vpc_id = result['VpcId']
+                status = result['Status']
+                issues = result['Issues']
+                
+                # Determine status class for styling
+                status_class = ''
+                if status == 'Clean':
+                    status_class = 'clean'
+                elif status == 'HasIssues':
+                    status_class = 'issues'
+                elif status == 'Remediated':
+                    status_class = 'remediated'
+                elif status == 'Excluded':
+                    status_class = 'excluded'
+                
+                # Build issues text
+                issues_text = "<ul>"
+                if issues:
+                    for issue in issues:
+                        issues_text += f"<li>{issue['Description']}</li>"
+                else:
+                    issues_text += "<li>No issues found</li>"
+                issues_text += "</ul>"
+                
+                html_report += f"""
+                <tr>
+                    <td>{sg_id}</td>
+                    <td>{sg_name}</td>
+                    <td>{vpc_id}</td>
+                    <td class="{status_class}">{status}</td>
+                    <td>{issues_text}</td>
+                </tr>
+                """
+            
+            html_report += """
+                </table>
+            </body>
+            </html>
+            """
+            
+            # Store the report in S3 if desired
+            # report_url = store_report_in_s3(html_report)
+            
+            return {
+                'ReportHTML': html_report,
+                # 'ReportURL': report_url
+            }
+      InputPayload:
+        SecurityGroupsAudited: "{{ AuditSecurityGroups.SecurityGroupsAudited }}"
+        SecurityGroupsWithIssues: "{{ AuditSecurityGroups.SecurityGroupsWithIssues }}"
+        SecurityGroupsRemediated: "{{ AuditSecurityGroups.SecurityGroupsRemediated }}"
+        AuditResults: "{{ AuditSecurityGroups.AuditResults }}"
+    outputs:
+      - Name: ReportHTML
+        Selector: $.Payload.ReportHTML
+        Type: String
+    isEnd: true

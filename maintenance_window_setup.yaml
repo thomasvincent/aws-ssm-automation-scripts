@@ -1,0 +1,248 @@
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Creates an SSM maintenance window with tasks
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  WindowName:
+    type: String
+    description: (Required) The name of the maintenance window.
+  WindowDescription:
+    type: String
+    description: (Optional) The description of the maintenance window.
+    default: "Maintenance window created by SSM Automation"
+  Schedule:
+    type: String
+    description: (Required) The schedule of the maintenance window in cron or rate expression.
+  Duration:
+    type: Integer
+    description: (Required) The duration of the maintenance window in hours.
+    minValue: 1
+    maxValue: 24
+  Cutoff:
+    type: Integer
+    description: (Required) The number of hours before the end of the maintenance window that the system stops scheduling new tasks.
+    minValue: 0
+    maxValue: 23
+  TargetType:
+    type: String
+    description: (Required) The type of targets to register with the maintenance window.
+    allowedValues:
+      - INSTANCE
+      - RESOURCE_GROUP
+      - TAG
+  TargetKey:
+    type: String
+    description: (Required) The key for the target. For INSTANCE type, provide comma-separated instance IDs. For TAG type, provide the tag key.
+  TargetValue:
+    type: StringList
+    description: (Required for TAG type) The value for the target key. For TAG type, provide the tag values.
+    default: []
+  TaskType:
+    type: String
+    description: (Required) The type of task to register with the maintenance window.
+    allowedValues:
+      - RUN_COMMAND
+      - AUTOMATION
+      - LAMBDA
+      - STEP_FUNCTIONS
+  TaskDocumentName:
+    type: String
+    description: (Required) The name of the task document to run.
+  TaskParameters:
+    type: StringMap
+    description: (Optional) The parameters for the task.
+    default: {}
+  ServiceRoleArn:
+    type: String
+    description: (Required) The service role ARN for the maintenance window tasks.
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: CreateMaintenanceWindow
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: ssm
+      Api: CreateMaintenanceWindow
+      Name: "{{ WindowName }}"
+      Description: "{{ WindowDescription }}"
+      Schedule: "{{ Schedule }}"
+      Duration: "{{ Duration }}"
+      Cutoff: "{{ Cutoff }}"
+      AllowUnassociatedTargets: true
+    outputs:
+      - Name: WindowId
+        Selector: $.WindowId
+        Type: String
+        
+  - name: RegisterTarget
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.8
+      Handler: register_target
+      Script: |-
+        import boto3
+        
+        def register_target(events, context):
+            """
+            Registers targets with the maintenance window based on target type.
+            
+            Args:
+                events (dict): Input parameters including WindowId, TargetType, TargetKey, TargetValue
+                context: Lambda context (not used)
+                
+            Returns:
+                dict: Results of target registration
+            """
+            ssm = boto3.client('ssm')
+            window_id = events['WindowId']
+            target_type = events['TargetType']
+            target_key = events['TargetKey']
+            target_values = events['TargetValue']
+            
+            targets = []
+            
+            if target_type == 'INSTANCE':
+                # For instance type, the key contains comma-separated instance IDs
+                instance_ids = [id.strip() for id in target_key.split(',')]
+                targets = [
+                    {
+                        'Key': 'InstanceIds',
+                        'Values': instance_ids
+                    }
+                ]
+            elif target_type == 'RESOURCE_GROUP':
+                # For resource group, the key is the resource group name
+                targets = [
+                    {
+                        'Key': 'ResourceGroup',
+                        'Values': [target_key]
+                    }
+                ]
+            elif target_type == 'TAG':
+                # For tag type, we use the key-value pair
+                targets = [
+                    {
+                        'Key': f"tag:{target_key}",
+                        'Values': target_values
+                    }
+                ]
+            
+            response = ssm.register_target_with_maintenance_window(
+                WindowId=window_id,
+                ResourceType=target_type,
+                Targets=targets,
+                OwnerInformation=f"Registered by SSM Automation at {boto3.client('sts').get_caller_identity()['Arn']}"
+            )
+            
+            return {
+                'WindowTargetId': response['WindowTargetId'],
+                'WindowId': window_id,
+                'Targets': targets
+            }
+      InputPayload:
+        WindowId: "{{ CreateMaintenanceWindow.WindowId }}"
+        TargetType: "{{ TargetType }}"
+        TargetKey: "{{ TargetKey }}"
+        TargetValue: "{{ TargetValue }}"
+    outputs:
+      - Name: WindowTargetId
+        Selector: $.Payload.WindowTargetId
+        Type: String
+        
+  - name: RegisterTask
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.8
+      Handler: register_task
+      Script: |-
+        import boto3
+        import json
+        
+        def register_task(events, context):
+            """
+            Registers a task with the maintenance window.
+            
+            Args:
+                events (dict): Input parameters including WindowId, WindowTargetId, TaskType, 
+                              TaskDocumentName, TaskParameters, ServiceRoleArn
+                context: Lambda context (not used)
+                
+            Returns:
+                dict: Results of task registration
+            """
+            ssm = boto3.client('ssm')
+            window_id = events['WindowId']
+            window_target_id = events['WindowTargetId']
+            task_type = events['TaskType']
+            document_name = events['TaskDocumentName']
+            parameters = events['TaskParameters']
+            service_role_arn = events['ServiceRoleArn']
+            
+            # Convert parameters to the format expected by SSM
+            formatted_parameters = {}
+            for key, value in parameters.items():
+                if isinstance(value, list):
+                    formatted_parameters[key] = value
+                else:
+                    formatted_parameters[key] = [value]
+            
+            response = ssm.register_task_with_maintenance_window(
+                WindowId=window_id,
+                WindowTaskId=f"{document_name.replace(':', '-')}-task",
+                TaskArn=document_name,
+                TaskType=task_type,
+                TaskParameters=formatted_parameters,
+                ServiceRoleArn=service_role_arn,
+                Priority=1,
+                MaxConcurrency="100%",
+                MaxErrors="10%",
+                Name=f"{document_name.split('/')[-1]} Task",
+                Description=f"Task created by SSM Automation for {document_name}",
+                Targets=[
+                    {
+                        'Key': 'WindowTargetIds',
+                        'Values': [window_target_id]
+                    }
+                ]
+            )
+            
+            return {
+                'WindowTaskId': response['WindowTaskId'],
+                'WindowId': window_id,
+                'TaskType': task_type,
+                'TaskArn': document_name
+            }
+      InputPayload:
+        WindowId: "{{ CreateMaintenanceWindow.WindowId }}"
+        WindowTargetId: "{{ RegisterTarget.WindowTargetId }}"
+        TaskType: "{{ TaskType }}"
+        TaskDocumentName: "{{ TaskDocumentName }}"
+        TaskParameters: "{{ TaskParameters }}"
+        ServiceRoleArn: "{{ ServiceRoleArn }}"
+    outputs:
+      - Name: WindowTaskId
+        Selector: $.Payload.WindowTaskId
+        Type: String
+        
+  - name: VerifyMaintenanceWindow
+    action: aws:executeAwsApi
+    onFailure: Continue
+    inputs:
+      Service: ssm
+      Api: DescribeMaintenanceWindows
+      Filters:
+        - Key: Name
+          Values:
+            - "{{ WindowName }}"
+    outputs:
+      - Name: MaintenanceWindows
+        Selector: $.WindowIdentities
+        Type: StringList
+    isEnd: true
