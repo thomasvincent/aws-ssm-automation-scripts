@@ -88,7 +88,7 @@ mainSteps:
   outputs:
     - Name: AttachedPolicies
       Selector: $.Payload.AttachedPolicies
-      Type: StringList
+      Type: StringMap
     - Name: FailedPolicies
       Selector: $.Payload.FailedPolicies
-      Type: StringList
+      Type: StringMap
