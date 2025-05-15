@@ -22,7 +22,7 @@ parameters:
   S3Bucket:
     type: String
     description: >-
-      (Optional) S3 bucket containing the Lambda deployment package. 
+      (Optional) S3 bucket containing the Lambda deployment package.
       Required for Create and Update operations.
     default: ""
   S3Key:
@@ -356,7 +356,8 @@ mainSteps:
                         'S3Bucket': s3_bucket,
                         'S3Key': s3_key
                     },
-                    'Description': f"Lambda function created by SSM Automation on {boto3.client('sts').get_caller_identity().get('Account')}",
+                    'Description': (f"Lambda function created by SSM Automation on " +
+                      f"{boto3.client('sts').get_caller_identity().get('Account')}"),
                     'Timeout': timeout,
                     'MemorySize': memory_size,
                     'Publish': True,

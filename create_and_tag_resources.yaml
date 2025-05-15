@@ -48,6 +48,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: CreateResource
     action: aws:executeScript
     onFailure: Abort
@@ -138,7 +139,9 @@ mainSteps:
                 'Region': region,
                 'Details': {
                     'BucketName': bucket_name,
-                    'CreationDate': response.get('CreationDate', '').isoformat() if hasattr(response.get('CreationDate', ''), 'isoformat') else str(response.get('CreationDate', ''))
+                    'CreationDate': (response.get('CreationDate', '').isoformat()
+                                    if hasattr(response.get('CreationDate', ''), 'isoformat')
+                                    else str(response.get('CreationDate', '')))
                 }
             }
 
@@ -184,7 +187,8 @@ mainSteps:
             return {
                 'ResourceType': 'EC2',
                 'ResourceId': instance_id,
-                'ResourceArn': f"arn:aws:ec2:{instance['Placement']['AvailabilityZone'][:-1]}:{boto3.client('sts').get_caller_identity()['Account']}:instance/{instance_id}",
+                'ResourceArn': (f"arn:aws:ec2:{instance['Placement']['AvailabilityZone'][:-1]}:" +
+                               f"{boto3.client('sts').get_caller_identity()['Account']}:instance/{instance_id}"),
                 'Region': instance['Placement']['AvailabilityZone'][:-1],
                 'Details': {
                     'InstanceId': instance_id,

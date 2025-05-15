@@ -23,16 +23,16 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
-- name: attachPolicies
-  action: 'aws:executeScript'
-  inputs:
-    Runtime: python3.10
-    Handler: script_handler
-    Script: |-
-      import boto3
-      from botocore.exceptions import ClientError
+  - name: attachPolicies
+    action: 'aws:executeScript'
+    inputs:
+      Runtime: python3.10
+      Handler: script_handler
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
 
-      def script_handler(events, context):
+        def script_handler(events, context):
           """
           Attaches AWS managed and customer managed policies to an IAM role.
 
@@ -81,14 +81,14 @@ mainSteps:
                   })
 
           return results
-    InputPayload:
-      RoleName: '{{ RoleName }}'
-      AWSManagedPolicies: '{{ AWSManagedPolicies }}'
-      CustomerManagedPolicies: '{{ CustomerManagedPolicies }}'
-  outputs:
-    - Name: AttachedPolicies
-      Selector: $.Payload.AttachedPolicies
-      Type: StringList
-    - Name: FailedPolicies
-      Selector: $.Payload.FailedPolicies
-      Type: StringList
+      InputPayload:
+        RoleName: '{{ RoleName }}'
+        AWSManagedPolicies: '{{ AWSManagedPolicies }}'
+        CustomerManagedPolicies: '{{ CustomerManagedPolicies }}'
+    outputs:
+      - Name: AttachedPolicies
+        Selector: $.Payload.AttachedPolicies
+        Type: StringList
+      - Name: FailedPolicies
+        Selector: $.Payload.FailedPolicies
+        Type: StringList

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 description: >-
-  Manages AWS CloudFront distributions, including creation, update, invalidation 
+  Manages AWS CloudFront distributions, including creation, update, invalidation
   and security configuration
 schemaVersion: '0.3'
 assumeRole: '{{ AutomationAssumeRole }}'
@@ -22,7 +22,7 @@ parameters:
   DistributionId:
     type: String
     description: >-
-      (Optional) The ID of an existing CloudFront distribution. 
+      (Optional) The ID of an existing CloudFront distribution.
       Required for all operations except Create.
     default: ""
   OriginDomainName:
@@ -61,7 +61,11 @@ parameters:
     type: StringMap
     description: >-
       (Optional) The default cache behavior configuration as a JSON string. If not provided, default settings will be used.
-      Example: {"ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":["GET","HEAD"],"CachedMethods":["GET","HEAD"],"DefaultTTL":86400}
+      Example:
+        {"ViewerProtocolPolicy":"redirect-to-https",
+         "AllowedMethods":["GET","HEAD"],
+         "CachedMethods":["GET","HEAD"],
+         "DefaultTTL":86400}
     default: "{}"
   CacheBehaviors:
     type: StringMap
@@ -74,7 +78,10 @@ parameters:
   LoggingConfig:
     type: StringMap
     description: >-
-      (Optional) Logging configuration as a JSON string. Example: {"Bucket":"logs-bucket.s3.amazonaws.com","Prefix":"distribution-logs/","IncludeCookies":false}
+      (Optional) Logging configuration as a JSON string. Example:
+        {"Bucket":"logs-bucket.s3.amazonaws.com",
+         "Prefix":"distribution-logs/",
+         "IncludeCookies":false}
     default: "{}"
   PathsToInvalidate:
     type: StringList

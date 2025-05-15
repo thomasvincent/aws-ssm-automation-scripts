@@ -35,7 +35,9 @@ parameters:
       - TAG
   TargetKey:
     type: String
-    description: (Required) The key for the target. For INSTANCE type, provide comma-separated instance IDs. For TAG type, provide the tag key.
+    description: |
+      (Required) The key for the target. For INSTANCE type, provide comma-separated instance IDs.
+      For TAG type, provide the tag key.
   TargetValue:
     type: StringList
     description: (Required for TAG type) The value for the target key. For TAG type, provide the tag values.
@@ -63,6 +65,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: CreateMaintenanceWindow
     action: aws:executeAwsApi
     onFailure: Abort
