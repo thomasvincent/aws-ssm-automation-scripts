@@ -31,6 +31,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: VerifyInstancesRunning
     action: aws:executeScript
     onFailure: Abort

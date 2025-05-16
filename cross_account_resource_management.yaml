@@ -63,6 +63,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: ValidateInputs
     action: aws:executeScript
     onFailure: Abort
@@ -480,7 +481,8 @@ mainSteps:
                 tags = parameters.get('Tags', [])
 
                 if not db_instance_identifier or not master_password or not subnet_group_name:
-                    return {'Status': 'Failed', 'Error': "Missing required parameters: DBInstanceIdentifier, MasterPassword, or DBSubnetGroupName"}
+                    return {'Status': 'Failed',
+                            'Error': "Missing required parameters: DBInstanceIdentifier, MasterPassword, or DBSubnetGroupName"}
 
                 # Create the RDS instance
                 response = rds.create_db_instance(
@@ -919,7 +921,8 @@ mainSteps:
 
                 sns.publish(
                     TopicArn=topic_arn,
-                    Subject=f"Cross-Account Operation: {results.get('Operation')} - {results.get('SuccessfulOperations')}/{results.get('AccountsProcessed')} Successful",
+                    Subject=(f"Cross-Account Operation: {results.get('Operation')} - " +
+                             f"{results.get('SuccessfulOperations')}/{results.get('AccountsProcessed')} Successful"),
                     Message=message
                 )
 

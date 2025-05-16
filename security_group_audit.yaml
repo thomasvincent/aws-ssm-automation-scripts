@@ -44,6 +44,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: AuditSecurityGroups
     action: aws:executeScript
     onFailure: Abort
@@ -130,14 +131,17 @@ mainSteps:
                         # Check if this is a public CIDR
                         if is_public_cidr(cidr):
                             # Check if specific ports are open that should be remediated
-                            if from_port in remediate_ports or to_port in remediate_ports or (from_port <= min(remediate_ports) and to_port >= max(remediate_ports)):
+                            if (from_port in remediate_ports or
+                                to_port in remediate_ports or
+                                (from_port <= min(remediate_ports) and to_port >= max(remediate_ports))):
                                 issue = {
                                     'Type': 'PublicAccess',
                                     'FromPort': from_port,
                                     'ToPort': to_port,
                                     'IpProtocol': ip_protocol,
                                     'Cidr': cidr,
-                                    'Description': f"Public access ({cidr}) allowed to {ip_protocol.upper()} port(s) {from_port if from_port == to_port else f'{from_port}-{to_port}'}"
+                                    'Description': (f"Public access ({cidr}) allowed to {ip_protocol.upper()} port(s) " +
+                                      f"{from_port if from_port == to_port else f'{from_port}-{to_port}'}")
                                 }
                                 issues.append(issue)
 
@@ -174,7 +178,9 @@ mainSteps:
                     'SecurityGroupId': sg_id,
                     'SecurityGroupName': sg_name,
                     'VpcId': vpc_id,
-                    'Status': 'Clean' if not issues else ('Remediated' if remediation_mode == 'Remediate' and remediations and not any('Error' in r for r in remediations) else 'HasIssues'),
+                    'Status': 'Clean' if not issues else
+                              ('Remediated' if remediation_mode == 'Remediate' and remediations and
+                               not any('Error' in r for r in remediations) else 'HasIssues'),
                     'Issues': issues,
                     'Remediations': remediations
                 }

@@ -1,0 +1,1287 @@
+---
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: >-
+  Manages AWS CloudFront distributions, including creation, update, invalidation
+  and security configuration
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  Operation:
+    type: String
+    description: (Required) The operation to perform.
+    allowedValues:
+      - Create
+      - Update
+      - Invalidate
+      - EnableLogging
+      - DisableLogging
+      - UpdateSecurityConfig
+      - GetDistributionConfig
+  DistributionId:
+    type: String
+    description: >-
+      (Optional) The ID of an existing CloudFront distribution.
+      Required for all operations except Create.
+    default: ""
+  OriginDomainName:
+    type: String
+    description: (Optional) The origin domain name for the distribution. Required for Create operation.
+    default: ""
+  OriginPath:
+    type: String
+    description: (Optional) The origin path for the distribution.
+    default: ""
+  OriginId:
+    type: String
+    description: (Optional) The ID for the origin. If not provided, one will be generated automatically.
+    default: ""
+  Comment:
+    type: String
+    description: (Optional) A comment about the distribution.
+    default: "Created by SSM Automation"
+  Enabled:
+    type: Boolean
+    description: (Optional) Whether the distribution is enabled to accept end user requests.
+    default: true
+  PriceClass:
+    type: String
+    description: (Optional) The price class for the distribution.
+    default: "PriceClass_100"
+    allowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+  DefaultRootObject:
+    type: String
+    description: (Optional) The default root object for the distribution.
+    default: "index.html"
+  DefaultCacheBehavior:
+    type: StringMap
+    description: >-
+      (Optional) The default cache behavior configuration as a JSON string. If not provided, default settings will be used.
+      Example:
+        {"ViewerProtocolPolicy":"redirect-to-https",
+         "AllowedMethods":["GET","HEAD"],
+         "CachedMethods":["GET","HEAD"],
+         "DefaultTTL":86400}
+    default: "{}"
+  CacheBehaviors:
+    type: StringMap
+    description: (Optional) A map of path patterns to cache behaviors as a JSON string.
+    default: "{}"
+  ViewerCertificateConfig:
+    type: StringMap
+    description: (Optional) Viewer certificate configuration as a JSON string.
+    default: "{}"
+  LoggingConfig:
+    type: StringMap
+    description: >-
+      (Optional) Logging configuration as a JSON string. Example:
+        {"Bucket":"logs-bucket.s3.amazonaws.com",
+         "Prefix":"distribution-logs/",
+         "IncludeCookies":false}
+    default: "{}"
+  PathsToInvalidate:
+    type: StringList
+    description: (Optional) A list of paths to invalidate. Required for Invalidate operation.
+    default: []
+  UseSSL:
+    type: Boolean
+    description: (Optional) Whether to use HTTPS for communication with the origin.
+    default: true
+  SecurityPolicyConfig:
+    type: StringMap
+    description: >-
+      (Optional) Security policy configuration as a JSON string. Required for UpdateSecurityConfig operation.
+      Example: {"MinimumProtocolVersion":"TLSv1.2_2019","SecurityPolicy":"TLSv1.2_2019"}
+    default: "{}"
+  AlternateDomainNames:
+    type: StringList
+    description: (Optional) A list of CNAME aliases to associate with the distribution.
+    default: []
+  CustomHeaders:
+    type: StringMap
+    description: (Optional) Custom headers to add to origin requests as a JSON string.
+    default: "{}"
+  GeoRestriction:
+    type: StringMap
+    description: >-
+      (Optional) Geo-restriction configuration as a JSON string.
+      Example: {"RestrictionType":"whitelist","Locations":["US","CA","GB"]}
+    default: "{}"
+  Tags:
+    type: StringMap
+    description: (Optional) Tags for the CloudFront distribution as a JSON string.
+    default: "{}"
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: ValidateParameters
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: validate_parameters
+      Script: |-
+        import json
+        import boto3
+        from botocore.exceptions import ClientError
+
+        def validate_parameters(events, context):
+            """
+            Validate input parameters based on the selected operation.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Validation results
+            """
+            operation = events['Operation']
+            distribution_id = events.get('DistributionId', '')
+
+            required_params = []
+            error_messages = []
+
+            # Define required parameters for each operation
+            if operation == 'Create':
+                required_params.append('OriginDomainName')
+            elif operation in ['Update', 'Invalidate', 'EnableLogging', 'DisableLogging', 'UpdateSecurityConfig', 'GetDistributionConfig']:
+                required_params.append('DistributionId')
+
+            # Add operation-specific validation
+            if operation == 'Invalidate' and (not events.get('PathsToInvalidate') or len(events.get('PathsToInvalidate', [])) == 0):
+                error_messages.append("PathsToInvalidate is required for Invalidate operation")
+
+            if operation == 'UpdateSecurityConfig' and not events.get('SecurityPolicyConfig'):
+                error_messages.append("SecurityPolicyConfig is required for UpdateSecurityConfig operation")
+
+            # Check required parameters are provided
+            for param in required_params:
+                if not events.get(param):
+                    error_messages.append(f"{param} is required for {operation} operation")
+
+            # Validate CloudFront distribution exists for operations that need it
+            if operation != 'Create' and distribution_id:
+                cloudfront = boto3.client('cloudfront')
+                try:
+                    cloudfront.get_distribution(Id=distribution_id)
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'NoSuchDistribution':
+                        error_messages.append(f"CloudFront distribution '{distribution_id}' does not exist")
+                    else:
+                        error_messages.append(f"Error checking CloudFront distribution: {str(e)}")
+
+            # Validate JSON parameters
+            json_params = ['DefaultCacheBehavior', 'CacheBehaviors', 'ViewerCertificateConfig',
+                          'LoggingConfig', 'SecurityPolicyConfig', 'CustomHeaders', 'GeoRestriction', 'Tags']
+
+            for param in json_params:
+                if events.get(param):
+                    try:
+                        if isinstance(events[param], str):
+                            json.loads(events[param])
+                    except json.JSONDecodeError:
+                        error_messages.append(f"{param} must be a valid JSON string")
+
+            return {
+                'IsValid': len(error_messages) == 0,
+                'ValidationErrors': error_messages,
+                'Operation': operation
+            }
+      InputPayload:
+        Operation: '{{ Operation }}'
+        DistributionId: '{{ DistributionId }}'
+        OriginDomainName: '{{ OriginDomainName }}'
+        PathsToInvalidate: '{{ PathsToInvalidate }}'
+        SecurityPolicyConfig: '{{ SecurityPolicyConfig }}'
+        DefaultCacheBehavior: '{{ DefaultCacheBehavior }}'
+        CacheBehaviors: '{{ CacheBehaviors }}'
+        ViewerCertificateConfig: '{{ ViewerCertificateConfig }}'
+        LoggingConfig: '{{ LoggingConfig }}'
+        CustomHeaders: '{{ CustomHeaders }}'
+        GeoRestriction: '{{ GeoRestriction }}'
+        Tags: '{{ Tags }}'
+    outputs:
+      - Name: IsValid
+        Selector: $.Payload.IsValid
+        Type: Boolean
+      - Name: ValidationErrors
+        Selector: $.Payload.ValidationErrors
+        Type: StringList
+      - Name: Operation
+        Selector: $.Payload.Operation
+        Type: String
+
+  - name: VerifyAndRouteOperation
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: CreateDistribution
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Create
+        - NextStep: UpdateDistribution
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Update
+        - NextStep: InvalidateDistribution
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Invalidate
+        - NextStep: EnableDistributionLogging
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: EnableLogging
+        - NextStep: DisableDistributionLogging
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: DisableLogging
+        - NextStep: UpdateSecurityConfiguration
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: UpdateSecurityConfig
+        - NextStep: GetDistributionConfiguration
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: GetDistributionConfig
+      Default: FailOperation
+
+  - name: FailOperation
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: report_failures
+      Script: |-
+        def report_failures(events, context):
+            """
+            Report validation failures and abort the automation.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Failure details
+            """
+            validation_errors = events['ValidationErrors']
+
+            return {
+                'Status': 'Failed',
+                'Reason': 'Parameter validation failed',
+                'Details': validation_errors
+            }
+      InputPayload:
+        ValidationErrors: '{{ ValidateParameters.ValidationErrors }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: Reason
+        Selector: $.Payload.Reason
+        Type: String
+      - Name: Details
+        Selector: $.Payload.Details
+        Type: StringList
+    isEnd: true
+
+  - name: CreateDistribution
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: create_distribution
+      Script: |-
+        import boto3
+        import json
+        import uuid
+        from botocore.exceptions import ClientError
+
+        def create_distribution(events, context):
+            """
+            Create a new CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of the distribution creation
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            # Extract parameters
+            origin_domain_name = events['OriginDomainName']
+            origin_path = events.get('OriginPath', '')
+            origin_id = events.get('OriginId', '')
+            if not origin_id:
+                origin_id = f"origin-{uuid.uuid4().hex[:8]}"
+
+            comment = events.get('Comment', 'Created by SSM Automation')
+            enabled = events.get('Enabled', True)
+            price_class = events.get('PriceClass', 'PriceClass_100')
+            default_root_object = events.get('DefaultRootObject', 'index.html')
+            use_ssl = events.get('UseSSL', True)
+
+            # Process JSON parameters
+            try:
+                default_cache_behavior = events.get('DefaultCacheBehavior', '{}')
+                if isinstance(default_cache_behavior, str):
+                    default_cache_behavior = json.loads(default_cache_behavior)
+
+                cache_behaviors = events.get('CacheBehaviors', '{}')
+                if isinstance(cache_behaviors, str):
+                    cache_behaviors = json.loads(cache_behaviors)
+
+                viewer_certificate = events.get('ViewerCertificateConfig', '{}')
+                if isinstance(viewer_certificate, str):
+                    viewer_certificate = json.loads(viewer_certificate)
+
+                logging_config = events.get('LoggingConfig', '{}')
+                if isinstance(logging_config, str):
+                    logging_config = json.loads(logging_config)
+
+                custom_headers = events.get('CustomHeaders', '{}')
+                if isinstance(custom_headers, str):
+                    custom_headers = json.loads(custom_headers)
+
+                geo_restriction = events.get('GeoRestriction', '{}')
+                if isinstance(geo_restriction, str):
+                    geo_restriction = json.loads(geo_restriction)
+
+                tags = events.get('Tags', '{}')
+                if isinstance(tags, str):
+                    tags = json.loads(tags)
+
+                alternate_domain_names = events.get('AlternateDomainNames', [])
+            except json.JSONDecodeError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to parse JSON parameter: {str(e)}"
+                }
+
+            # Build distribution config
+            distribution_config = {
+                'CallerReference': f"ssm-{uuid.uuid4().hex}",
+                'Origins': {
+                    'Quantity': 1,
+                    'Items': [
+                        {
+                            'Id': origin_id,
+                            'DomainName': origin_domain_name,
+                            'OriginPath': origin_path,
+                            'CustomOriginConfig': {
+                                'HTTPPort': 80,
+                                'HTTPSPort': 443,
+                                'OriginProtocolPolicy': 'https-only' if use_ssl else 'http-only',
+                                'OriginSslProtocols': {
+                                    'Quantity': 1,
+                                    'Items': ['TLSv1.2']
+                                },
+                                'OriginReadTimeout': 30,
+                                'OriginKeepaliveTimeout': 5
+                            }
+                        }
+                    ]
+                },
+                'DefaultCacheBehavior': {
+                    'TargetOriginId': origin_id,
+                    'ViewerProtocolPolicy': default_cache_behavior.get('ViewerProtocolPolicy', 'redirect-to-https'),
+                    'AllowedMethods': {
+                        'Quantity': len(default_cache_behavior.get('AllowedMethods', ['GET', 'HEAD'])),
+                        'Items': default_cache_behavior.get('AllowedMethods', ['GET', 'HEAD']),
+                        'CachedMethods': {
+                            'Quantity': len(default_cache_behavior.get('CachedMethods', ['GET', 'HEAD'])),
+                            'Items': default_cache_behavior.get('CachedMethods', ['GET', 'HEAD'])
+                        }
+                    },
+                    'Compress': True,
+                    'DefaultTTL': default_cache_behavior.get('DefaultTTL', 86400),
+                    'MinTTL': default_cache_behavior.get('MinTTL', 0),
+                    'MaxTTL': default_cache_behavior.get('MaxTTL', 31536000),
+                    'ForwardedValues': {
+                        'QueryString': default_cache_behavior.get('ForwardQueryString', False),
+                        'Cookies': {
+                            'Forward': default_cache_behavior.get('CookieForwarding', 'none')
+                        },
+                        'Headers': {
+                            'Quantity': 0,
+                            'Items': []
+                        },
+                        'QueryStringCacheKeys': {
+                            'Quantity': 0,
+                            'Items': []
+                        }
+                    }
+                },
+                'Comment': comment,
+                'Enabled': enabled,
+                'DefaultRootObject': default_root_object,
+                'PriceClass': price_class
+            }
+
+            # Add cache behaviors if provided
+            if cache_behaviors and isinstance(cache_behaviors, dict) and len(cache_behaviors) > 0:
+                cache_behavior_items = []
+                for path_pattern, behavior in cache_behaviors.items():
+                    item = {
+                        'PathPattern': path_pattern,
+                        'TargetOriginId': origin_id,
+                        'ViewerProtocolPolicy': behavior.get('ViewerProtocolPolicy', 'redirect-to-https'),
+                        'AllowedMethods': {
+                            'Quantity': len(behavior.get('AllowedMethods', ['GET', 'HEAD'])),
+                            'Items': behavior.get('AllowedMethods', ['GET', 'HEAD']),
+                            'CachedMethods': {
+                                'Quantity': len(behavior.get('CachedMethods', ['GET', 'HEAD'])),
+                                'Items': behavior.get('CachedMethods', ['GET', 'HEAD'])
+                            }
+                        },
+                        'Compress': True,
+                        'DefaultTTL': behavior.get('DefaultTTL', 86400),
+                        'MinTTL': behavior.get('MinTTL', 0),
+                        'MaxTTL': behavior.get('MaxTTL', 31536000),
+                        'ForwardedValues': {
+                            'QueryString': behavior.get('ForwardQueryString', False),
+                            'Cookies': {
+                                'Forward': behavior.get('CookieForwarding', 'none')
+                            },
+                            'Headers': {
+                                'Quantity': 0,
+                                'Items': []
+                            },
+                            'QueryStringCacheKeys': {
+                                'Quantity': 0,
+                                'Items': []
+                            }
+                        }
+                    }
+                    cache_behavior_items.append(item)
+
+                distribution_config['CacheBehaviors'] = {
+                    'Quantity': len(cache_behavior_items),
+                    'Items': cache_behavior_items
+                }
+            else:
+                distribution_config['CacheBehaviors'] = {
+                    'Quantity': 0,
+                    'Items': []
+                }
+
+            # Add logging configuration if provided
+            if logging_config and isinstance(logging_config, dict) and 'Bucket' in logging_config:
+                distribution_config['Logging'] = {
+                    'Enabled': True,
+                    'IncludeCookies': logging_config.get('IncludeCookies', False),
+                    'Bucket': logging_config['Bucket'],
+                    'Prefix': logging_config.get('Prefix', '')
+                }
+            else:
+                distribution_config['Logging'] = {
+                    'Enabled': False,
+                    'IncludeCookies': False,
+                    'Bucket': '',
+                    'Prefix': ''
+                }
+
+            # Add ViewerCertificate configuration if provided
+            if viewer_certificate and isinstance(viewer_certificate, dict):
+                certificate_source = viewer_certificate.get('CertificateSource', 'cloudfront')
+
+                if certificate_source == 'acm' and 'ACMCertificateArn' in viewer_certificate:
+                    distribution_config['ViewerCertificate'] = {
+                        'CloudFrontDefaultCertificate': False,
+                        'ACMCertificateArn': viewer_certificate['ACMCertificateArn'],
+                        'SSLSupportMethod': viewer_certificate.get('SSLSupportMethod', 'sni-only'),
+                        'MinimumProtocolVersion': viewer_certificate.get('MinimumProtocolVersion', 'TLSv1.2_2019')
+                    }
+                elif certificate_source == 'iam' and 'IAMCertificateId' in viewer_certificate:
+                    distribution_config['ViewerCertificate'] = {
+                        'CloudFrontDefaultCertificate': False,
+                        'IAMCertificateId': viewer_certificate['IAMCertificateId'],
+                        'SSLSupportMethod': viewer_certificate.get('SSLSupportMethod', 'sni-only'),
+                        'MinimumProtocolVersion': viewer_certificate.get('MinimumProtocolVersion', 'TLSv1.2_2019')
+                    }
+                else:
+                    distribution_config['ViewerCertificate'] = {
+                        'CloudFrontDefaultCertificate': True
+                    }
+            else:
+                distribution_config['ViewerCertificate'] = {
+                    'CloudFrontDefaultCertificate': True
+                }
+
+            # Add geo-restriction if provided
+            if geo_restriction and isinstance(geo_restriction, dict) and 'RestrictionType' in geo_restriction:
+                distribution_config['Restrictions'] = {
+                    'GeoRestriction': {
+                        'RestrictionType': geo_restriction['RestrictionType'],
+                        'Quantity': len(geo_restriction.get('Locations', [])),
+                        'Items': geo_restriction.get('Locations', [])
+                    }
+                }
+            else:
+                distribution_config['Restrictions'] = {
+                    'GeoRestriction': {
+                        'RestrictionType': 'none',
+                        'Quantity': 0,
+                        'Items': []
+                    }
+                }
+
+            # Add custom origin headers if provided
+            if custom_headers and isinstance(custom_headers, dict) and len(custom_headers) > 0:
+                custom_header_items = []
+                for name, value in custom_headers.items():
+                    custom_header_items.append({
+                        'HeaderName': name,
+                        'HeaderValue': value
+                    })
+
+                distribution_config['Origins']['Items'][0]['CustomHeaders'] = {
+                    'Quantity': len(custom_header_items),
+                    'Items': custom_header_items
+                }
+            else:
+                distribution_config['Origins']['Items'][0]['CustomHeaders'] = {
+                    'Quantity': 0,
+                    'Items': []
+                }
+
+            # Add alternate domain names if provided
+            if alternate_domain_names and len(alternate_domain_names) > 0:
+                distribution_config['Aliases'] = {
+                    'Quantity': len(alternate_domain_names),
+                    'Items': alternate_domain_names
+                }
+            else:
+                distribution_config['Aliases'] = {
+                    'Quantity': 0,
+                    'Items': []
+                }
+
+            # Add tags if provided
+            tag_items = []
+            if tags and isinstance(tags, dict) and len(tags) > 0:
+                for key, value in tags.items():
+                    tag_items.append({
+                        'Key': key,
+                        'Value': value
+                    })
+
+            # Add default tags
+            tag_items.append({
+                'Key': 'CreatedBy',
+                'Value': 'SSM-Automation'
+            })
+
+            try:
+                # Create the distribution
+                response = cloudfront.create_distribution_with_tags(
+                    DistributionConfigWithTags={
+                        'DistributionConfig': distribution_config,
+                        'Tags': {
+                            'Items': tag_items
+                        }
+                    }
+                )
+
+                distribution = response['Distribution']
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': distribution['Id'],
+                    'DomainName': distribution['DomainName'],
+                    'ARN': distribution['ARN'],
+                    'Status': distribution['Status'],
+                    'LastModifiedTime': distribution['LastModifiedTime'].isoformat(),
+                    'OriginDomainName': origin_domain_name
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to create CloudFront distribution: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        OriginDomainName: '{{ OriginDomainName }}'
+        OriginPath: '{{ OriginPath }}'
+        OriginId: '{{ OriginId }}'
+        Comment: '{{ Comment }}'
+        Enabled: '{{ Enabled }}'
+        PriceClass: '{{ PriceClass }}'
+        DefaultRootObject: '{{ DefaultRootObject }}'
+        DefaultCacheBehavior: '{{ DefaultCacheBehavior }}'
+        CacheBehaviors: '{{ CacheBehaviors }}'
+        ViewerCertificateConfig: '{{ ViewerCertificateConfig }}'
+        LoggingConfig: '{{ LoggingConfig }}'
+        CustomHeaders: '{{ CustomHeaders }}'
+        GeoRestriction: '{{ GeoRestriction }}'
+        Tags: '{{ Tags }}'
+        UseSSL: '{{ UseSSL }}'
+        AlternateDomainNames: '{{ AlternateDomainNames }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: DistributionId
+        Selector: $.Payload.DistributionId
+        Type: String
+      - Name: DomainName
+        Selector: $.Payload.DomainName
+        Type: String
+      - Name: ARN
+        Selector: $.Payload.ARN
+        Type: String
+    isEnd: true
+
+  - name: UpdateDistribution
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: update_distribution
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+
+        def update_distribution(events, context):
+            """
+            Update an existing CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of distribution update
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+
+            try:
+                # Get the current distribution configuration
+                response = cloudfront.get_distribution_config(Id=distribution_id)
+                etag = response['ETag']
+                config = response['DistributionConfig']
+
+                # Update configuration based on provided parameters
+                if 'Comment' in events and events['Comment']:
+                    config['Comment'] = events['Comment']
+
+                if 'Enabled' in events:
+                    config['Enabled'] = events['Enabled']
+
+                if 'PriceClass' in events and events['PriceClass']:
+                    config['PriceClass'] = events['PriceClass']
+
+                if 'DefaultRootObject' in events and events['DefaultRootObject']:
+                    config['DefaultRootObject'] = events['DefaultRootObject']
+
+                # Process JSON parameters
+                try:
+                    # Update DefaultCacheBehavior if provided
+                    default_cache_behavior = events.get('DefaultCacheBehavior', '{}')
+                    if isinstance(default_cache_behavior, str):
+                        default_cache_behavior = json.loads(default_cache_behavior)
+
+                    if default_cache_behavior and len(default_cache_behavior) > 0:
+                        # Update specific fields in DefaultCacheBehavior
+                        if 'ViewerProtocolPolicy' in default_cache_behavior:
+                            config['DefaultCacheBehavior']['ViewerProtocolPolicy'] = default_cache_behavior['ViewerProtocolPolicy']
+
+                        if 'DefaultTTL' in default_cache_behavior:
+                            config['DefaultCacheBehavior']['DefaultTTL'] = default_cache_behavior['DefaultTTL']
+
+                        if 'MinTTL' in default_cache_behavior:
+                            config['DefaultCacheBehavior']['MinTTL'] = default_cache_behavior['MinTTL']
+
+                        if 'MaxTTL' in default_cache_behavior:
+                            config['DefaultCacheBehavior']['MaxTTL'] = default_cache_behavior['MaxTTL']
+
+                    # Update ViewerCertificate if provided
+                    viewer_certificate = events.get('ViewerCertificateConfig', '{}')
+                    if isinstance(viewer_certificate, str):
+                        viewer_certificate = json.loads(viewer_certificate)
+
+                    if viewer_certificate and len(viewer_certificate) > 0:
+                        certificate_source = viewer_certificate.get('CertificateSource', '')
+
+                        if certificate_source == 'acm' and 'ACMCertificateArn' in viewer_certificate:
+                            config['ViewerCertificate'] = {
+                                'CloudFrontDefaultCertificate': False,
+                                'ACMCertificateArn': viewer_certificate['ACMCertificateArn'],
+                                'SSLSupportMethod': viewer_certificate.get('SSLSupportMethod', 'sni-only'),
+                                'MinimumProtocolVersion': viewer_certificate.get('MinimumProtocolVersion', 'TLSv1.2_2019')
+                            }
+                        elif certificate_source == 'iam' and 'IAMCertificateId' in viewer_certificate:
+                            config['ViewerCertificate'] = {
+                                'CloudFrontDefaultCertificate': False,
+                                'IAMCertificateId': viewer_certificate['IAMCertificateId'],
+                                'SSLSupportMethod': viewer_certificate.get('SSLSupportMethod', 'sni-only'),
+                                'MinimumProtocolVersion': viewer_certificate.get('MinimumProtocolVersion', 'TLSv1.2_2019')
+                            }
+                        elif certificate_source == 'cloudfront':
+                            config['ViewerCertificate'] = {
+                                'CloudFrontDefaultCertificate': True
+                            }
+
+                    # Update alternate domain names if provided
+                    alternate_domain_names = events.get('AlternateDomainNames', [])
+                    if alternate_domain_names and len(alternate_domain_names) > 0:
+                        config['Aliases'] = {
+                            'Quantity': len(alternate_domain_names),
+                            'Items': alternate_domain_names
+                        }
+                except json.JSONDecodeError as e:
+                    return {
+                        'Status': 'Failed',
+                        'Reason': f"Failed to parse JSON parameter: {str(e)}"
+                    }
+
+                # Update the distribution
+                update_response = cloudfront.update_distribution(
+                    Id=distribution_id,
+                    IfMatch=etag,
+                    DistributionConfig=config
+                )
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': update_response['Distribution']['Id'],
+                    'DomainName': update_response['Distribution']['DomainName'],
+                    'ARN': update_response['Distribution']['ARN'],
+                    'Status': update_response['Distribution']['Status'],
+                    'LastModifiedTime': update_response['Distribution']['LastModifiedTime'].isoformat()
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to update CloudFront distribution: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+        Comment: '{{ Comment }}'
+        Enabled: '{{ Enabled }}'
+        PriceClass: '{{ PriceClass }}'
+        DefaultRootObject: '{{ DefaultRootObject }}'
+        DefaultCacheBehavior: '{{ DefaultCacheBehavior }}'
+        ViewerCertificateConfig: '{{ ViewerCertificateConfig }}'
+        AlternateDomainNames: '{{ AlternateDomainNames }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: DistributionId
+        Selector: $.Payload.DistributionId
+        Type: String
+      - Name: DomainName
+        Selector: $.Payload.DomainName
+        Type: String
+    isEnd: true
+
+  - name: InvalidateDistribution
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: invalidate_distribution
+      Script: |-
+        import boto3
+        import uuid
+        from botocore.exceptions import ClientError
+
+        def invalidate_distribution(events, context):
+            """
+            Create an invalidation for a CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of the invalidation
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+            paths_to_invalidate = events['PathsToInvalidate']
+
+            # Ensure all paths start with /
+            normalized_paths = []
+            for path in paths_to_invalidate:
+                if not path.startswith('/'):
+                    normalized_paths.append(f"/{path}")
+                else:
+                    normalized_paths.append(path)
+
+            try:
+                response = cloudfront.create_invalidation(
+                    DistributionId=distribution_id,
+                    InvalidationBatch={
+                        'Paths': {
+                            'Quantity': len(normalized_paths),
+                            'Items': normalized_paths
+                        },
+                        'CallerReference': f"ssm-{uuid.uuid4().hex}"
+                    }
+                )
+
+                invalidation = response['Invalidation']
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': distribution_id,
+                    'InvalidationId': invalidation['Id'],
+                    'Status': invalidation['Status'],
+                    'CreateTime': invalidation['CreateTime'].isoformat(),
+                    'Paths': normalized_paths
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to create invalidation: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+        PathsToInvalidate: '{{ PathsToInvalidate }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: InvalidationId
+        Selector: $.Payload.InvalidationId
+        Type: String
+      - Name: InvalidationStatus
+        Selector: $.Payload.Status
+        Type: String
+      - Name: Paths
+        Selector: $.Payload.Paths
+        Type: StringList
+    isEnd: true
+
+  - name: EnableDistributionLogging
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: enable_logging
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+
+        def enable_logging(events, context):
+            """
+            Enable access logging for a CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of enabling logging
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+
+            # Process logging configuration
+            try:
+                logging_config = events.get('LoggingConfig', '{}')
+                if isinstance(logging_config, str):
+                    logging_config = json.loads(logging_config)
+
+                if not logging_config or 'Bucket' not in logging_config:
+                    return {
+                        'Status': 'Failed',
+                        'Reason': "LoggingConfig must include a valid S3 bucket"
+                    }
+            except json.JSONDecodeError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to parse LoggingConfig JSON: {str(e)}"
+                }
+
+            try:
+                # Get the current distribution configuration
+                response = cloudfront.get_distribution_config(Id=distribution_id)
+                etag = response['ETag']
+                config = response['DistributionConfig']
+
+                # Update logging configuration
+                config['Logging'] = {
+                    'Enabled': True,
+                    'IncludeCookies': logging_config.get('IncludeCookies', False),
+                    'Bucket': logging_config['Bucket'],
+                    'Prefix': logging_config.get('Prefix', '')
+                }
+
+                # Update the distribution
+                update_response = cloudfront.update_distribution(
+                    Id=distribution_id,
+                    IfMatch=etag,
+                    DistributionConfig=config
+                )
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': update_response['Distribution']['Id'],
+                    'LoggingEnabled': True,
+                    'LoggingBucket': logging_config['Bucket'],
+                    'LoggingPrefix': logging_config.get('Prefix', ''),
+                    'IncludeCookies': logging_config.get('IncludeCookies', False)
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to enable logging: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+        LoggingConfig: '{{ LoggingConfig }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: LoggingEnabled
+        Selector: $.Payload.LoggingEnabled
+        Type: Boolean
+      - Name: LoggingBucket
+        Selector: $.Payload.LoggingBucket
+        Type: String
+    isEnd: true
+
+  - name: DisableDistributionLogging
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: disable_logging
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+
+        def disable_logging(events, context):
+            """
+            Disable access logging for a CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of disabling logging
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+
+            try:
+                # Get the current distribution configuration
+                response = cloudfront.get_distribution_config(Id=distribution_id)
+                etag = response['ETag']
+                config = response['DistributionConfig']
+
+                # Disable logging
+                config['Logging'] = {
+                    'Enabled': False,
+                    'IncludeCookies': False,
+                    'Bucket': '',
+                    'Prefix': ''
+                }
+
+                # Update the distribution
+                update_response = cloudfront.update_distribution(
+                    Id=distribution_id,
+                    IfMatch=etag,
+                    DistributionConfig=config
+                )
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': update_response['Distribution']['Id'],
+                    'LoggingEnabled': False
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to disable logging: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: LoggingEnabled
+        Selector: $.Payload.LoggingEnabled
+        Type: Boolean
+    isEnd: true
+
+  - name: UpdateSecurityConfiguration
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: update_security
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+
+        def update_security(events, context):
+            """
+            Update security configuration of a CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of security update
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+
+            # Process security policy configuration
+            try:
+                security_config = events.get('SecurityPolicyConfig', '{}')
+                if isinstance(security_config, str):
+                    security_config = json.loads(security_config)
+
+                if not security_config:
+                    return {
+                        'Status': 'Failed',
+                        'Reason': "SecurityPolicyConfig is required"
+                    }
+            except json.JSONDecodeError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to parse SecurityPolicyConfig JSON: {str(e)}"
+                }
+
+            try:
+                # Get the current distribution configuration
+                response = cloudfront.get_distribution_config(Id=distribution_id)
+                etag = response['ETag']
+                config = response['DistributionConfig']
+
+                # Update security configuration
+                minimum_protocol_version = security_config.get('MinimumProtocolVersion', 'TLSv1.2_2019')
+
+                # Update viewer certificate if it exists
+                if 'ViewerCertificate' in config:
+                    # Only update if not using CloudFront default certificate
+                    if not config['ViewerCertificate'].get('CloudFrontDefaultCertificate', True):
+                        config['ViewerCertificate']['MinimumProtocolVersion'] = minimum_protocol_version
+
+                # Update the distribution
+                update_response = cloudfront.update_distribution(
+                    Id=distribution_id,
+                    IfMatch=etag,
+                    DistributionConfig=config
+                )
+
+                return {
+                    'Status': 'Success',
+                    'DistributionId': update_response['Distribution']['Id'],
+                    'MinimumProtocolVersion': minimum_protocol_version
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to update security configuration: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+        SecurityPolicyConfig: '{{ SecurityPolicyConfig }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: MinimumProtocolVersion
+        Selector: $.Payload.MinimumProtocolVersion
+        Type: String
+    isEnd: true
+
+  - name: GetDistributionConfiguration
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: get_distribution_config
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+
+        def get_distribution_config(events, context):
+            """
+            Get the configuration of a CloudFront distribution.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Distribution configuration
+            """
+            cloudfront = boto3.client('cloudfront')
+
+            distribution_id = events['DistributionId']
+
+            try:
+                # Get distribution details
+                dist_response = cloudfront.get_distribution(Id=distribution_id)
+                distribution = dist_response['Distribution']
+
+                # Get distribution config
+                config_response = cloudfront.get_distribution_config(Id=distribution_id)
+                config = config_response['DistributionConfig']
+
+                # Get tags
+                try:
+                    tags_response = cloudfront.list_tags_for_resource(
+                        Resource=distribution['ARN']
+                    )
+                    tags = {item['Key']: item['Value'] for item in tags_response['Tags']['Items']}
+                except ClientError:
+                    tags = {}
+
+                # Extract useful information
+                result = {
+                    'Status': 'Success',
+                    'DistributionId': distribution['Id'],
+                    'DomainName': distribution['DomainName'],
+                    'ARN': distribution['ARN'],
+                    'Status': distribution['Status'],
+                    'LastModifiedTime': distribution['LastModifiedTime'].isoformat(),
+                    'Enabled': config['Enabled'],
+                    'Comment': config.get('Comment', ''),
+                    'PriceClass': config.get('PriceClass', ''),
+                    'DefaultRootObject': config.get('DefaultRootObject', ''),
+                    'LoggingEnabled': config['Logging']['Enabled'],
+                    'OriginsCount': config['Origins']['Quantity'],
+                    'DefaultCacheBehavior': {
+                        'TargetOriginId': config['DefaultCacheBehavior'].get('TargetOriginId', ''),
+                        'ViewerProtocolPolicy': config['DefaultCacheBehavior'].get('ViewerProtocolPolicy', ''),
+                        'DefaultTTL': config['DefaultCacheBehavior'].get('DefaultTTL', 0),
+                        'MinTTL': config['DefaultCacheBehavior'].get('MinTTL', 0),
+                        'MaxTTL': config['DefaultCacheBehavior'].get('MaxTTL', 0)
+                    },
+                    'Tags': tags
+                }
+
+                # Add origins
+                if 'Items' in config['Origins']:
+                    origins = []
+                    for origin in config['Origins']['Items']:
+                        origins.append({
+                            'Id': origin['Id'],
+                            'DomainName': origin['DomainName'],
+                            'OriginPath': origin.get('OriginPath', '')
+                        })
+                    result['Origins'] = origins
+
+                # Add aliases
+                if 'Aliases' in config and config['Aliases']['Quantity'] > 0:
+                    result['AlternateDomainNames'] = config['Aliases']['Items']
+
+                # Add viewer certificate details
+                if 'ViewerCertificate' in config:
+                    viewer_cert = config['ViewerCertificate']
+                    cert_info = {
+                        'CloudFrontDefaultCertificate': viewer_cert.get('CloudFrontDefaultCertificate', True)
+                    }
+
+                    if 'ACMCertificateArn' in viewer_cert:
+                        cert_info['ACMCertificateArn'] = viewer_cert['ACMCertificateArn']
+
+                    if 'IAMCertificateId' in viewer_cert:
+                        cert_info['IAMCertificateId'] = viewer_cert['IAMCertificateId']
+
+                    if 'MinimumProtocolVersion' in viewer_cert:
+                        cert_info['MinimumProtocolVersion'] = viewer_cert['MinimumProtocolVersion']
+
+                    result['ViewerCertificate'] = cert_info
+
+                # Add logging details
+                if config['Logging']['Enabled']:
+                    result['LoggingConfig'] = {
+                        'Bucket': config['Logging']['Bucket'],
+                        'Prefix': config['Logging']['Prefix'],
+                        'IncludeCookies': config['Logging']['IncludeCookies']
+                    }
+
+                return result
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to get distribution configuration: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        DistributionId: '{{ DistributionId }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: DistributionId
+        Selector: $.Payload.DistributionId
+        Type: String
+      - Name: DomainName
+        Selector: $.Payload.DomainName
+        Type: String
+      - Name: Config
+        Selector: $.Payload
+        Type: StringMap
+    isEnd: true

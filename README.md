@@ -8,100 +8,158 @@ This repository contains a collection of AWS Systems Manager (SSM) Automation do
 
 ## Scripts
 
-### IAM Management
+### CDN Management
 
-- **`attach_policies_to_role.yaml`**: Attaches IAM policies to a specific IAM role.
+- **`cloudfront_distribution_management.yaml`**: Manages AWS CloudFront distributions, including creation, update, invalidation and security configuration
   - Parameters:
-    - `RoleName`: The name of the IAM role to attach policies to
-    - `AWSManagedPolicies`: A list of AWS managed policy names to attach
-    - `CustomerManagedPolicies`: A list of customer managed policy ARNs to attach
-
-### S3 Management
-
-- **`s3_encryption.yaml`**: Enables server-side encryption on an S3 bucket using a KMS key.
-  - Parameters:
-    - `BucketName`: The name of the S3 bucket to encrypt
-    - `KMSMasterKey`: The ARN of the KMS customer master key to use
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+    - `Operation`: (Required) The operation to perform.
+    - `DistributionId`: (Optional) The ID of an existing CloudFront distribution. Required for all operations except Create.
+    - `OriginDomainName`: (Optional) The origin domain name for the distribution. Required for Create operation.
+    - `OriginPath`: (Optional) The origin path for the distribution.
+    - `OriginId`: (Optional) The ID for the origin. If not provided, one will be generated automatically.
+    - `Comment`: (Optional) A comment about the distribution.
+    - `Enabled`: (Optional) Whether the distribution is enabled to accept end user requests.
+    - `PriceClass`: (Optional) The price class for the distribution.
+    - `DefaultRootObject`: (Optional) The default root object for the distribution.
+    - `DefaultCacheBehavior`: (Optional) The default cache behavior configuration as a JSON string. If not provided, default settings will be used. Example:
+  {"ViewerProtocolPolicy":"redirect-to-https",
+   "AllowedMethods":["GET","HEAD"],
+   "CachedMethods":["GET","HEAD"],
+   "DefaultTTL":86400}
+    - `CacheBehaviors`: (Optional) A map of path patterns to cache behaviors as a JSON string.
+    - `ViewerCertificateConfig`: (Optional) Viewer certificate configuration as a JSON string.
+    - `LoggingConfig`: (Optional) Logging configuration as a JSON string. Example:
+  {"Bucket":"logs-bucket.s3.amazonaws.com",
+   "Prefix":"distribution-logs/",
+   "IncludeCookies":false}
+    - `PathsToInvalidate`: (Optional) A list of paths to invalidate. Required for Invalidate operation.
+    - `UseSSL`: (Optional) Whether to use HTTPS for communication with the origin.
+    - `SecurityPolicyConfig`: (Optional) Security policy configuration as a JSON string. Required for UpdateSecurityConfig operation. Example: {"MinimumProtocolVersion":"TLSv1.2_2019","SecurityPolicy":"TLSv1.2_2019"}
+    - `AlternateDomainNames`: (Optional) A list of CNAME aliases to associate with the distribution.
+    - `CustomHeaders`: (Optional) Custom headers to add to origin requests as a JSON string.
+    - `GeoRestriction`: (Optional) Geo-restriction configuration as a JSON string. Example: {"RestrictionType":"whitelist","Locations":["US","CA","GB"]}
+    - `Tags`: (Optional) Tags for the CloudFront distribution as a JSON string.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
 ### EC2 Management
 
-- **`ec2_instance_patching.yaml`**: Patches EC2 instances with security updates.
+- **`ec2_instance_patching.yaml`**: Patches EC2 instances with security updates
   - Parameters:
-    - `InstanceIds`: List of EC2 instance IDs to patch
-    - `RebootOption`: Whether to reboot instances after patching
-    - `PatchSeverity`: The severity level of patches to apply
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+    - `InstanceIds`: (Required) List of EC2 instance IDs to patch.
+    - `RebootOption`: (Optional) Whether to reboot instances after patching.
+    - `PatchSeverity`: (Optional) The severity level of patches to apply.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
-### Resource Management
+### IAM Management
 
-- **`create_and_tag_resources.yaml`**: Creates AWS resources and applies consistent tagging.
+- **`attach_policies_to_role.yaml`**: Attach policies to an IAM role
   - Parameters:
-    - `ResourceType`: Type of AWS resource to create (S3, EC2, RDS)
-    - `ResourceName`: Name to give the created resource
-    - `ResourceParameters`: JSON object with resource-specific parameters
-    - `Environment`: Environment this resource belongs to
-    - `Department`: Department this resource belongs to
-    - `Project`: Project this resource belongs to
-    - `Owner`: Owner of this resource
-    - `CostCenter`: Cost center for billing
-    - `AdditionalTags`: (Optional) Additional tags to apply
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+    - `RoleName`: (Required) The name of the IAM role to attach policies to.
+    - `AWSManagedPolicies`: (Optional) A list of AWS managed policies to attach to the role.
+    - `CustomerManagedPolicies`: (Optional) A list of customer managed policies to attach to the role.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
-- **`cross_account_resource_management.yaml`**: Manages resources across multiple AWS accounts.
+### Lambda Management
+
+- **`lambda_function_management.yaml`**: Creates, updates, and manages AWS Lambda functions
   - Parameters:
-    - `Operation`: The operation to perform across accounts
-    - `TargetAccounts`: List of AWS account IDs to perform the operation against
-    - `TargetRegions`: (Optional) AWS regions to target
-    - `CrossAccountRoleName`: The name of the IAM role to assume in target accounts
-    - `ResourceType`: (Optional) Type of resource to operate on
-    - `ResourceParameters`: (Optional) Parameters specific to the resource type and operation
-    - `MaxConcurrentAccounts`: (Optional) Maximum number of accounts to process concurrently
-    - `NotificationTopicArn`: (Optional) SNS Topic ARN to send operation notifications to
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
-
-### Cost Management
-
-- **`cost_optimization_recommendations.yaml`**: Identifies cost optimization opportunities across AWS resources.
-  - Parameters:
-    - `ResourceTypes`: (Optional) Types of resources to check (EC2, EBS, S3, RDS, etc.)
-    - `Region`: (Optional) AWS region to check
-    - `IdleDaysThreshold`: (Optional) Number of days of inactivity to consider a resource idle
-    - `LowUtilizationThreshold`: (Optional) CPU utilization percentage below which to consider an instance underutilized
-    - `NotificationTopicArn`: (Optional) SNS topic ARN to send notifications
-    - `GenerateReport`: (Optional) Whether to generate an HTML report of findings
-    - `ReportS3Bucket`: (Optional) S3 bucket to store the HTML report
-    - `ReportS3Prefix`: (Optional) S3 key prefix for the HTML report
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
-
-### Security Management
-
-- **`security_group_audit.yaml`**: Audits and remediates security groups for public access and best practices.
-  - Parameters:
-    - `SecurityGroupIds`: (Optional) List of security group IDs to audit
-    - `VpcIds`: (Optional) List of VPC IDs to audit security groups in
-    - `RemediationMode`: The remediation mode to use (Audit/Remediate)
-    - `RemediateOpenPorts`: List of ports to remediate if open to 0.0.0.0/0
-    - `ExcludedSecurityGroups`: (Optional) Security groups to exclude from remediation
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+    - `Operation`: (Required) The operation to perform.
+    - `FunctionName`: (Required) The name of the Lambda function.
+    - `S3Bucket`: (Optional) S3 bucket containing the Lambda deployment package. Required for Create and Update operations.
+    - `S3Key`: (Optional) S3 key for the Lambda deployment package. Required for Create and Update operations.
+    - `Handler`: (Optional) The function within your code that Lambda calls to begin execution.
+    - `Runtime`: (Optional) The runtime environment for the Lambda function.
+    - `MemorySize`: (Optional) The amount of memory available to the function at runtime.
+    - `Timeout`: (Optional) The amount of time that Lambda allows a function to run before stopping it.
+    - `Role`: (Required for Create) The ARN of the IAM role that Lambda assumes when it executes your function.
+    - `Environment`: (Optional) Environment variables for the Lambda function, provided as a JSON string.
+    - `Tags`: (Optional) Tags for the Lambda function, provided as a JSON string.
+    - `ReservedConcurrentExecutions`: (Optional) The number of reserved concurrent executions for this function.
+    - `AliasName`: (Optional) Name of the Lambda alias to create or update. Required for AddAlias operation.
+    - `AliasVersion`: (Optional) Function version that the alias invokes. Required for AddAlias operation.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
 ### Maintenance Windows
 
-- **`maintenance_window_setup.yaml`**: Creates an SSM maintenance window with tasks.
+- **`maintenance_window_setup.yaml`**: Creates an SSM maintenance window with tasks
   - Parameters:
-    - `WindowName`: The name of the maintenance window
-    - `WindowDescription`: (Optional) The description of the maintenance window
-    - `Schedule`: The schedule of the maintenance window in cron/rate expression
-    - `Duration`: The duration of the maintenance window in hours
-    - `Cutoff`: Number of hours before the end to stop scheduling new tasks
-    - `TargetType`: The type of targets to register (INSTANCE, RESOURCE_GROUP, TAG)
-    - `TargetKey`: The key for the target
-    - `TargetValue`: (Required for TAG type) The value for the target key
-    - `TaskType`: The type of task to register (RUN_COMMAND, AUTOMATION, etc.)
-    - `TaskDocumentName`: The name of the task document to run
-    - `TaskParameters`: (Optional) The parameters for the task
-    - `ServiceRoleArn`: The service role ARN for the maintenance window tasks
-    - `AutomationAssumeRole`: (Optional) The ARN of the automation role
+    - `WindowName`: (Required) The name of the maintenance window.
+    - `WindowDescription`: (Optional) The description of the maintenance window.
+    - `Schedule`: (Required) The schedule of the maintenance window in cron or rate expression.
+    - `Duration`: (Required) The duration of the maintenance window in hours.
+    - `Cutoff`: (Required) The number of hours before the end of the maintenance window that the system stops scheduling new tasks.
+    - `TargetType`: (Required) The type of targets to register with the maintenance window.
+    - `TargetKey`: (Required) The key for the target. For INSTANCE type, provide comma-separated instance IDs.
+For TAG type, provide the tag key.
+
+    - `TargetValue`: (Required for TAG type) The value for the target key. For TAG type, provide the tag values.
+    - `TaskType`: (Required) The type of task to register with the maintenance window.
+    - `TaskDocumentName`: (Required) The name of the task document to run.
+    - `TaskParameters`: (Optional) The parameters for the task.
+    - `ServiceRoleArn`: (Required) The service role ARN for the maintenance window tasks.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+### Other Utilities
+
+- **`cost_optimization_recommendations.yaml`**: Identifies cost optimization opportunities across AWS resources
+  - Parameters:
+    - `ResourceTypes`: (Optional) Types of resources to check (EC2, EBS, S3, RDS, etc.)
+    - `Region`: (Optional) AWS region to check. If not specified, the current region will be used.
+    - `IdleDaysThreshold`: (Optional) Number of days of inactivity to consider a resource idle.
+    - `LowUtilizationThreshold`: (Optional) CPU utilization percentage below which to consider an instance underutilized.
+    - `NotificationTopicArn`: (Optional) SNS topic ARN to send notifications.
+    - `GenerateReport`: (Optional) Whether to generate an HTML report of findings.
+    - `ReportS3Bucket`: (Optional) S3 bucket to store the HTML report.
+    - `ReportS3Prefix`: (Optional) S3 key prefix for the HTML report.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+### Resource Management
+
+- **`create_and_tag_resources.yaml`**: Creates AWS resources and applies consistent tagging
+  - Parameters:
+    - `ResourceType`: (Required) Type of AWS resource to create (e.g., EC2, S3, RDS).
+    - `ResourceName`: (Required) Name to give the created resource.
+    - `ResourceParameters`: (Required) JSON object containing parameters specific to the resource type.
+    - `Environment`: (Required) Environment this resource belongs to.
+    - `Department`: (Required) Department this resource belongs to.
+    - `Project`: (Required) Project this resource belongs to.
+    - `Owner`: (Required) Owner of this resource (typically an email address).
+    - `CostCenter`: (Required) Cost center for billing this resource.
+    - `AdditionalTags`: (Optional) Additional tags to apply to the resource.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+- **`cross_account_resource_management.yaml`**: Manages resources across multiple AWS accounts
+  - Parameters:
+    - `Operation`: (Required) The operation to perform across accounts.
+    - `TargetAccounts`: (Required) List of AWS account IDs to perform the operation against.
+    - `TargetRegions`: (Optional) AWS regions to target. If not specified, only the current region will be used.
+    - `CrossAccountRoleName`: (Required) The name of the IAM role to assume in target accounts. Must be the same name across all accounts.
+    - `ResourceType`: (Optional) Type of resource to operate on. Required for CreateResources, TagResources, UpdateSecurityGroups.
+    - `ResourceParameters`: (Optional) Parameters specific to the resource type and operation.
+    - `TagKey`: (Optional) Tag key when performing TagResources operation.
+    - `TagValue`: (Optional) Tag value when performing TagResources operation.
+    - `MaxConcurrentAccounts`: (Optional) Maximum number of accounts to process concurrently.
+    - `NotificationTopicArn`: (Optional) SNS Topic ARN to send operation notifications to.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+### S3 Management
+
+- **`s3_encryption.yaml`**: Enables server-side encryption on an S3 bucket using a KMS key
+  - Parameters:
+    - `BucketName`: (Required) The name of the S3 Bucket to enable encryption on.
+    - `KMSMasterKey`: (Required) The ARN of the KMS customer master key (CMK) to use for the default encryption.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+### Security Management
+
+- **`security_group_audit.yaml`**: Audits and remediates security groups for public access and best practices
+  - Parameters:
+    - `SecurityGroupIds`: (Optional) List of security group IDs to audit. If not provided, all security groups in the account will be audited.
+    - `VpcIds`: (Optional) List of VPC IDs to audit security groups in. If not provided, security groups in all VPCs will be audited.
+    - `RemediationMode`: (Optional) The remediation mode to use. Audit will only report issues, Remediate will fix them.
+    - `RemediateOpenPorts`: (Optional) List of ports to remediate if open to 0.0.0.0/0. Default is common high-risk ports.
+    - `ExcludedSecurityGroups`: (Optional) List of security group IDs to exclude from remediation.
+    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
 ## Shared Python Modules
 
@@ -210,6 +268,36 @@ This repository uses GitHub Actions for continuous integration and continuous de
 - **Automatic Releases**: New releases are created automatically when version tags are pushed
 - **Dependency Management**: Dependabot keeps dependencies up to date
 
+## Releases and Versioning
+
+This repository uses semantic versioning (SemVer) for releases and is published to GitHub Packages.
+
+### Installing from GitHub Packages
+
+You can install these automation scripts from GitHub Packages:
+
+```bash
+# Configure npm to use GitHub Packages (first time only)
+echo "@thomasvincent:registry=https://npm.pkg.github.com" >> .npmrc
+
+# Install the package
+npm install @thomasvincent/aws-ssm-automation-scripts
+```
+
+### Release Process
+
+Releases are created automatically using GitHub Actions when a new version is created:
+
+1. A version bump is triggered using the workflow dispatch event
+2. The version is incremented in package.json (major, minor, or patch)
+3. A new tag and release is created with the new version number
+4. A zip file containing all the SSM documents is attached to the release
+5. The package is published to GitHub Packages
+
+### Using the Release Assets
+
+The release assets (zip file) include all SSM documents and shared modules, ready to be deployed to AWS Systems Manager.
+
 ## Best Practices
 
 These scripts follow these AWS best practices:
@@ -222,6 +310,7 @@ These scripts follow these AWS best practices:
 6. **Consistent Structure**: Standardized document structure for easier understanding
 7. **Reusability**: Shared modules for common functionality
 8. **Multi-Account Support**: Cross-account resource management capabilities
+9. **Versioning**: Proper versioning and release management
 
 ## Development
 

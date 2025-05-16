@@ -1,0 +1,10 @@
+# Development tools and files
+.github/
+.git/
+.gitignore
+.yamllint
+node_modules/
+
+# Testing and build artifacts
+dist/
+*.log

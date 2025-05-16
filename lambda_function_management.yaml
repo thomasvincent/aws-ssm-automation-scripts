@@ -1,0 +1,888 @@
+---
+# Copyright (c) 2024 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Creates, updates, and manages AWS Lambda functions
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  Operation:
+    type: String
+    description: (Required) The operation to perform.
+    allowedValues:
+      - Create
+      - Update
+      - Enable
+      - Disable
+      - AddAlias
+      - UpdateConcurrency
+  FunctionName:
+    type: String
+    description: (Required) The name of the Lambda function.
+  S3Bucket:
+    type: String
+    description: >-
+      (Optional) S3 bucket containing the Lambda deployment package.
+      Required for Create and Update operations.
+    default: ""
+  S3Key:
+    type: String
+    description: >-
+      (Optional) S3 key for the Lambda deployment package.
+      Required for Create and Update operations.
+    default: ""
+  Handler:
+    type: String
+    description: (Optional) The function within your code that Lambda calls to begin execution.
+    default: "index.handler"
+  Runtime:
+    type: String
+    description: (Optional) The runtime environment for the Lambda function.
+    default: "python3.10"
+    allowedValues:
+      - nodejs18.x
+      - nodejs20.x
+      - python3.9
+      - python3.10
+      - python3.11
+      - java17
+      - dotnet6
+      - go1.x
+      - ruby3.2
+  MemorySize:
+    type: Integer
+    description: (Optional) The amount of memory available to the function at runtime.
+    default: 128
+    allowedValues:
+      - 128
+      - 256
+      - 512
+      - 1024
+      - 1536
+      - 2048
+      - 3008
+      - 4096
+      - 8192
+      - 10240
+  Timeout:
+    type: Integer
+    description: (Optional) The amount of time that Lambda allows a function to run before stopping it.
+    default: 30
+  Role:
+    type: String
+    description: (Required for Create) The ARN of the IAM role that Lambda assumes when it executes your function.
+    default: ""
+  Environment:
+    type: StringMap
+    description: (Optional) Environment variables for the Lambda function, provided as a JSON string.
+    default: "{}"
+  Tags:
+    type: StringMap
+    description: (Optional) Tags for the Lambda function, provided as a JSON string.
+    default: "{}"
+  ReservedConcurrentExecutions:
+    type: Integer
+    description: (Optional) The number of reserved concurrent executions for this function.
+    default: -1
+  AliasName:
+    type: String
+    description: (Optional) Name of the Lambda alias to create or update. Required for AddAlias operation.
+    default: ""
+  AliasVersion:
+    type: String
+    description: (Optional) Function version that the alias invokes. Required for AddAlias operation.
+    default: ""
+  AutomationAssumeRole:
+    type: String
+    description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+    default: ""
+mainSteps:
+  - name: ValidateParameters
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: validate_parameters
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+        import logging
+
+        def validate_parameters(events, context):
+            """
+            Validate input parameters based on the selected operation.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Validation results
+            """
+            operation = events['Operation']
+            function_name = events['FunctionName']
+
+            required_params = ['FunctionName']
+            error_messages = []
+
+            # Operation-specific validation
+            if operation == 'Create':
+                if not events.get('Role'):
+                    error_messages.append("Role ARN is required for Create operation")
+                if not events.get('S3Bucket') or not events.get('S3Key'):
+                    error_messages.append("S3Bucket and S3Key are required for Create operation")
+
+            elif operation == 'Update':
+                if not events.get('S3Bucket') or not events.get('S3Key'):
+                    error_messages.append("S3Bucket and S3Key are required for Update operation")
+
+            elif operation == 'AddAlias':
+                if not events.get('AliasName'):
+                    error_messages.append("AliasName is required for AddAlias operation")
+                if not events.get('AliasVersion'):
+                    error_messages.append("AliasVersion is required for AddAlias operation")
+
+            # Check if Lambda function exists for operations other than Create
+            if operation != 'Create':
+                lambda_client = boto3.client('lambda')
+                try:
+                    lambda_client.get_function(FunctionName=function_name)
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                        error_messages.append(f"Lambda function '{function_name}' does not exist")
+                    else:
+                        error_messages.append(f"Error checking Lambda function: {str(e)}")
+
+            # Parse JSON strings if provided
+            try:
+                environment = events.get('Environment', '{}')
+                if isinstance(environment, str):
+                    json.loads(environment)
+            except json.JSONDecodeError:
+                error_messages.append("Environment must be a valid JSON string")
+
+            try:
+                tags = events.get('Tags', '{}')
+                if isinstance(tags, str):
+                    json.loads(tags)
+            except json.JSONDecodeError:
+                error_messages.append("Tags must be a valid JSON string")
+
+            return {
+                'IsValid': len(error_messages) == 0,
+                'ValidationErrors': error_messages,
+                'Operation': operation,
+                'FunctionName': function_name
+            }
+      InputPayload:
+        Operation: '{{ Operation }}'
+        FunctionName: '{{ FunctionName }}'
+        S3Bucket: '{{ S3Bucket }}'
+        S3Key: '{{ S3Key }}'
+        Role: '{{ Role }}'
+        Environment: '{{ Environment }}'
+        Tags: '{{ Tags }}'
+        AliasName: '{{ AliasName }}'
+        AliasVersion: '{{ AliasVersion }}'
+    outputs:
+      - Name: IsValid
+        Selector: $.Payload.IsValid
+        Type: Boolean
+      - Name: ValidationErrors
+        Selector: $.Payload.ValidationErrors
+        Type: StringList
+      - Name: Operation
+        Selector: $.Payload.Operation
+        Type: String
+      - Name: FunctionName
+        Selector: $.Payload.FunctionName
+        Type: String
+
+  - name: VerifyAndCreateFunction
+    action: aws:branch
+    inputs:
+      Choices:
+        - NextStep: CreateFunction
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Create
+        - NextStep: UpdateFunction
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Update
+        - NextStep: EnableFunction
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Enable
+        - NextStep: DisableFunction
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: Disable
+        - NextStep: AddFunctionAlias
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: AddAlias
+        - NextStep: UpdateFunctionConcurrency
+          Not:
+            Variable: '{{ ValidateParameters.IsValid }}'
+            BooleanEquals: false
+          And:
+            Variable: '{{ ValidateParameters.Operation }}'
+            StringEquals: UpdateConcurrency
+      Default: FailOperation
+
+  - name: FailOperation
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: report_failures
+      Script: |-
+        def report_failures(events, context):
+            """
+            Report validation failures and abort the automation.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Failure details
+            """
+            validation_errors = events['ValidationErrors']
+
+            return {
+                'Status': 'Failed',
+                'Reason': 'Parameter validation failed',
+                'Details': validation_errors
+            }
+      InputPayload:
+        ValidationErrors: '{{ ValidateParameters.ValidationErrors }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: Reason
+        Selector: $.Payload.Reason
+        Type: String
+      - Name: Details
+        Selector: $.Payload.Details
+        Type: StringList
+    isEnd: true
+
+  - name: CreateFunction
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: create_function
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def create_function(events, context):
+            """
+            Create a new Lambda function.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of function creation
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+            s3_bucket = events['S3Bucket']
+            s3_key = events['S3Key']
+            handler = events['Handler']
+            runtime = events['Runtime']
+            memory_size = events['MemorySize']
+            timeout = events['Timeout']
+            role = events['Role']
+
+            # Process environment variables
+            environment = events.get('Environment', '{}')
+            if isinstance(environment, str):
+                environment = json.loads(environment)
+
+            # Process tags
+            tags = events.get('Tags', '{}')
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+
+            try:
+                # Check if function already exists
+                try:
+                    lambda_client.get_function(FunctionName=function_name)
+                    return {
+                        'Status': 'Failed',
+                        'Reason': f"Lambda function '{function_name}' already exists. Use Update operation instead."
+                    }
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                        raise
+
+                # Create the function
+                create_params = {
+                    'FunctionName': function_name,
+                    'Runtime': runtime,
+                    'Role': role,
+                    'Handler': handler,
+                    'Code': {
+                        'S3Bucket': s3_bucket,
+                        'S3Key': s3_key
+                    },
+                    'Description': (f"Lambda function created by SSM Automation on " +
+                      f"{boto3.client('sts').get_caller_identity().get('Account')}"),
+                    'Timeout': timeout,
+                    'MemorySize': memory_size,
+                    'Publish': True,
+                    'Tags': tags
+                }
+
+                # Add environment variables if provided
+                if environment:
+                    create_params['Environment'] = {
+                        'Variables': environment
+                    }
+
+                response = lambda_client.create_function(**create_params)
+
+                # Wait for the function to be active
+                waiter = lambda_client.get_waiter('function_active')
+                waiter.wait(FunctionName=function_name)
+
+                return {
+                    'Status': 'Success',
+                    'FunctionName': function_name,
+                    'FunctionArn': response['FunctionArn'],
+                    'Runtime': runtime,
+                    'Role': role,
+                    'Handler': handler,
+                    'LastModified': response['LastModified']
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to create Lambda function: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+        S3Bucket: '{{ S3Bucket }}'
+        S3Key: '{{ S3Key }}'
+        Handler: '{{ Handler }}'
+        Runtime: '{{ Runtime }}'
+        MemorySize: '{{ MemorySize }}'
+        Timeout: '{{ Timeout }}'
+        Role: '{{ Role }}'
+        Environment: '{{ Environment }}'
+        Tags: '{{ Tags }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: FunctionArn
+        Selector: $.Payload.FunctionArn
+        Type: String
+      - Name: LastModified
+        Selector: $.Payload.LastModified
+        Type: String
+    isEnd: true
+
+  - name: UpdateFunction
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: update_function
+      Script: |-
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def update_function(events, context):
+            """
+            Update an existing Lambda function.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of function update
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+            s3_bucket = events['S3Bucket']
+            s3_key = events['S3Key']
+            handler = events['Handler']
+            runtime = events['Runtime']
+            memory_size = events['MemorySize']
+            timeout = events['Timeout']
+
+            # Process environment variables
+            environment = events.get('Environment', '{}')
+            if isinstance(environment, str):
+                environment = json.loads(environment)
+
+            try:
+                # Update function code
+                code_response = lambda_client.update_function_code(
+                    FunctionName=function_name,
+                    S3Bucket=s3_bucket,
+                    S3Key=s3_key,
+                    Publish=True
+                )
+
+                # Update function configuration
+                config_params = {
+                    'FunctionName': function_name,
+                    'Runtime': runtime,
+                    'Handler': handler,
+                    'Timeout': timeout,
+                    'MemorySize': memory_size
+                }
+
+                # Add environment variables if provided
+                if environment:
+                    config_params['Environment'] = {
+                        'Variables': environment
+                    }
+
+                config_response = lambda_client.update_function_configuration(**config_params)
+
+                # Wait for the function to be updated and active
+                waiter = lambda_client.get_waiter('function_updated')
+                waiter.wait(FunctionName=function_name)
+
+                # Get the latest version info
+                function_info = lambda_client.get_function(FunctionName=function_name)
+
+                return {
+                    'Status': 'Success',
+                    'FunctionName': function_name,
+                    'FunctionArn': config_response['FunctionArn'],
+                    'Version': code_response['Version'],
+                    'LastModified': config_response['LastModified'],
+                    'State': function_info['Configuration']['State'],
+                    'LastUpdateStatus': function_info['Configuration'].get('LastUpdateStatus', 'Successful')
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to update Lambda function: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+        S3Bucket: '{{ S3Bucket }}'
+        S3Key: '{{ S3Key }}'
+        Handler: '{{ Handler }}'
+        Runtime: '{{ Runtime }}'
+        MemorySize: '{{ MemorySize }}'
+        Timeout: '{{ Timeout }}'
+        Environment: '{{ Environment }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: FunctionArn
+        Selector: $.Payload.FunctionArn
+        Type: String
+      - Name: Version
+        Selector: $.Payload.Version
+        Type: String
+      - Name: LastModified
+        Selector: $.Payload.LastModified
+        Type: String
+      - Name: State
+        Selector: $.Payload.State
+        Type: String
+    isEnd: true
+
+  - name: EnableFunction
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: enable_function
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def enable_function(events, context):
+            """
+            Enable an existing Lambda function.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of enabling the function
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+
+            try:
+                # Get current function state
+                function_info = lambda_client.get_function(FunctionName=function_name)
+                current_state = function_info['Configuration'].get('State')
+
+                if current_state == 'Active':
+                    return {
+                        'Status': 'Success',
+                        'FunctionName': function_name,
+                        'Message': 'Lambda function is already enabled',
+                        'State': 'Active'
+                    }
+
+                # Remove any function concurrency if disabled
+                try:
+                    lambda_client.delete_function_concurrency(
+                        FunctionName=function_name
+                    )
+                except ClientError as e:
+                    # If there is no concurrency setting, this will fail
+                    if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                        raise
+
+                # Wait for the function to be active (this happens automatically after removing concurrency)
+                waiter = lambda_client.get_waiter('function_active')
+                waiter.wait(FunctionName=function_name)
+
+                # Get updated function info
+                updated_function = lambda_client.get_function(FunctionName=function_name)
+
+                return {
+                    'Status': 'Success',
+                    'FunctionName': function_name,
+                    'FunctionArn': updated_function['Configuration']['FunctionArn'],
+                    'State': updated_function['Configuration']['State'],
+                    'LastModified': updated_function['Configuration']['LastModified']
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to enable Lambda function: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: State
+        Selector: $.Payload.State
+        Type: String
+      - Name: Message
+        Selector: $.Payload.Message
+        Type: String
+    isEnd: true
+
+  - name: DisableFunction
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: disable_function
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def disable_function(events, context):
+            """
+            Disable a Lambda function by setting reserved concurrency to 0.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of disabling the function
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+
+            try:
+                # Get current function state
+                function_info = lambda_client.get_function(FunctionName=function_name)
+
+                # Set reserved concurrency to 0 to disable the function
+                response = lambda_client.put_function_concurrency(
+                    FunctionName=function_name,
+                    ReservedConcurrentExecutions=0
+                )
+
+                return {
+                    'Status': 'Success',
+                    'FunctionName': function_name,
+                    'FunctionArn': response['FunctionArn'],
+                    'ReservedConcurrentExecutions': 0,
+                    'State': 'Disabled'
+                }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to disable Lambda function: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: State
+        Selector: $.Payload.State
+        Type: String
+      - Name: ReservedConcurrentExecutions
+        Selector: $.Payload.ReservedConcurrentExecutions
+        Type: Integer
+    isEnd: true
+
+  - name: AddFunctionAlias
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: add_alias
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def add_alias(events, context):
+            """
+            Create or update a Lambda function alias.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of creating or updating the alias
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+            alias_name = events['AliasName']
+            function_version = events['AliasVersion']
+
+            try:
+                # Check if alias already exists
+                try:
+                    existing_alias = lambda_client.get_alias(
+                        FunctionName=function_name,
+                        Name=alias_name
+                    )
+
+                    # Update existing alias
+                    response = lambda_client.update_alias(
+                        FunctionName=function_name,
+                        Name=alias_name,
+                        FunctionVersion=function_version,
+                        Description=f"Updated by SSM Automation"
+                    )
+
+                    return {
+                        'Status': 'Success',
+                        'Operation': 'Update',
+                        'FunctionName': function_name,
+                        'AliasName': alias_name,
+                        'AliasArn': response['AliasArn'],
+                        'FunctionVersion': function_version
+                    }
+
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                        raise
+
+                    # Create new alias
+                    response = lambda_client.create_alias(
+                        FunctionName=function_name,
+                        Name=alias_name,
+                        FunctionVersion=function_version,
+                        Description=f"Created by SSM Automation"
+                    )
+
+                    return {
+                        'Status': 'Success',
+                        'Operation': 'Create',
+                        'FunctionName': function_name,
+                        'AliasName': alias_name,
+                        'AliasArn': response['AliasArn'],
+                        'FunctionVersion': function_version
+                    }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to manage Lambda alias: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+        AliasName: '{{ AliasName }}'
+        AliasVersion: '{{ AliasVersion }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: Operation
+        Selector: $.Payload.Operation
+        Type: String
+      - Name: AliasArn
+        Selector: $.Payload.AliasArn
+        Type: String
+      - Name: FunctionVersion
+        Selector: $.Payload.FunctionVersion
+        Type: String
+    isEnd: true
+
+  - name: UpdateFunctionConcurrency
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.10
+      Handler: update_concurrency
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+        import logging
+
+        # Setup logging
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        def update_concurrency(events, context):
+            """
+            Update the reserved concurrency for a Lambda function.
+
+            Args:
+                events (dict): Input parameters
+                context: Lambda context (not used)
+
+            Returns:
+                dict: Results of updating concurrency
+            """
+            lambda_client = boto3.client('lambda')
+
+            function_name = events['FunctionName']
+            reserved_concurrency = events['ReservedConcurrentExecutions']
+
+            try:
+                # If reserved concurrency is -1, delete the concurrency setting
+                if reserved_concurrency == -1:
+                    try:
+                        lambda_client.delete_function_concurrency(
+                            FunctionName=function_name
+                        )
+
+                        return {
+                            'Status': 'Success',
+                            'FunctionName': function_name,
+                            'Message': 'Reserved concurrency setting removed',
+                            'ReservedConcurrentExecutions': 'Unreserved'
+                        }
+                    except ClientError as e:
+                        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                            return {
+                                'Status': 'Success',
+                                'FunctionName': function_name,
+                                'Message': 'Function did not have a concurrency setting to remove',
+                                'ReservedConcurrentExecutions': 'Unreserved'
+                            }
+                        raise
+                else:
+                    # Set the concurrency
+                    response = lambda_client.put_function_concurrency(
+                        FunctionName=function_name,
+                        ReservedConcurrentExecutions=reserved_concurrency
+                    )
+
+                    return {
+                        'Status': 'Success',
+                        'FunctionName': function_name,
+                        'FunctionArn': response['FunctionArn'],
+                        'ReservedConcurrentExecutions': reserved_concurrency
+                    }
+
+            except ClientError as e:
+                return {
+                    'Status': 'Failed',
+                    'Reason': f"Failed to update Lambda concurrency: {str(e)}",
+                    'ErrorCode': e.response['Error']['Code'],
+                    'ErrorMessage': e.response['Error']['Message']
+                }
+      InputPayload:
+        FunctionName: '{{ FunctionName }}'
+        ReservedConcurrentExecutions: '{{ ReservedConcurrentExecutions }}'
+    outputs:
+      - Name: Status
+        Selector: $.Payload.Status
+        Type: String
+      - Name: ReservedConcurrentExecutions
+        Selector: $.Payload.ReservedConcurrentExecutions
+        Type: String
+      - Name: Message
+        Selector: $.Payload.Message
+        Type: String
+    isEnd: true
