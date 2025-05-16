@@ -15,7 +15,7 @@ jobs:
     # Only run this job if explicitly approved in the PR comments
     if: contains(github.event.pull_request.labels.*.name, 'safe-to-test')
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Python
         uses: actions/setup-python@v5
