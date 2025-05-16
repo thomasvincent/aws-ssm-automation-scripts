@@ -52,6 +52,7 @@ parameters:
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
     default: ""
 mainSteps:
+
   - name: FindCostOptimizationOpportunities
     action: aws:executeScript
     onFailure: Continue
@@ -643,7 +644,8 @@ mainSteps:
                 if report_s3_bucket:
                     try:
                         s3 = boto3.client('s3')
-                        report_key = f"{report_s3_prefix.rstrip('/')}/cost-optimization-report-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.html"
+                        report_key = (f"{report_s3_prefix.rstrip('/')}/" +
+                                      f"cost-optimization-report-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.html")
 
                         s3.put_object(
                             Bucket=report_s3_bucket,
@@ -731,7 +733,8 @@ mainSteps:
                     <p><strong>Region:</strong> {summary.get('Region', 'Unknown')}</p>
                     <p><strong>Resources Analyzed:</strong> {summary.get('ResourcesAnalyzed', 0)}</p>
                     <p><strong>Optimization Opportunities:</strong> {summary.get('OptimizationOpportunities', 0)}</p>
-                    <p><strong>Estimated Monthly Savings:</strong> <span class="savings">${summary.get('TotalEstimatedMonthlySavings', 0):.2f}</span></p>
+                    <p><strong>Estimated Monthly Savings:</strong>
+                      <span class="savings">${summary.get('TotalEstimatedMonthlySavings', 0):.2f}</span></p>
                 </div>
             """
 
@@ -774,7 +777,9 @@ mainSteps:
             # Add footer
             html += """
                 <h3>Next Steps</h3>
-                <p>Review these recommendations and consider implementing them to optimize your AWS costs. Before making any changes, evaluate the impact on your workloads and ensure that business requirements are still met.</p>
+                <p>Review these recommendations and consider implementing them to optimize your AWS costs.
+                  Before making any changes, evaluate the impact on your workloads and ensure that
+                  business requirements are still met.</p>
 
                 <h3>Additional Cost Optimization Strategies</h3>
                 <ul>

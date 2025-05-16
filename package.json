@@ -1,0 +1,37 @@
+{
+  "name": "aws-ssm-automation-scripts",
+  "version": "1.0.2",
+  "description": "A collection of AWS Systems Manager (SSM) Automation documents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thomasvincent/aws-ssm-automation-scripts.git"
+  },
+  "keywords": [
+    "aws",
+    "ssm",
+    "automation",
+    "devops",
+    "infrastructure"
+  ],
+  "author": "Thomas Vincent",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/thomasvincent/aws-ssm-automation-scripts/issues"
+  },
+  "homepage": "https://github.com/thomasvincent/aws-ssm-automation-scripts#readme",
+  "scripts": {
+    "lint": "yamllint -c .github/yamllint-config.yml .",
+    "update-readme": "python .github/scripts/update_readme.py",
+    "version-bump": "node .github/scripts/version-bump.js",
+    "package": "node .github/scripts/create-package.js"
+  },
+  "files": [
+    "*.yaml",
+    "shared/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
+  }
+}
