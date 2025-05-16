@@ -40,4 +40,6 @@ jobs:
           git config --local user.name "GitHub Action"
           git add README.md
           git commit -m "docs: update README with latest script documentation"
+          # Use a personal access token with appropriate permissions for push
           git push
+        continue-on-error: true

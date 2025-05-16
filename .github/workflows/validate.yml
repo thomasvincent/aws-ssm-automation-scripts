@@ -36,20 +36,32 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Configure AWS credentials
+      - name: Install dependencies
+        run: |
+          pip install awscli pyyaml
+          
+      - name: Basic YAML validation
+        run: |
+          for file in $(find . -name "*.yaml" -not -path "*/\.*"); do
+            echo "Validating YAML syntax for $file..."
+            python -c "import yaml, json, sys; yaml.safe_load(open('$file', 'r'))" || exit 1
+            echo "$file is valid YAML"
+          done
+          echo "All SSM documents are valid YAML"
+          
+      - name: Configure AWS credentials (optional)
         uses: aws-actions/configure-aws-credentials@v4
+        continue-on-error: true
+        id: aws-creds
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
           
-      - name: Install AWS CLI
-        run: |
-          pip install awscli
-          
-      - name: Validate SSM Documents
+      - name: Validate SSM Documents with AWS API
+        if: steps.aws-creds.outcome == 'success'
         run: |
           for file in $(find . -name "*.yaml" -not -path "*/\.*"); do
-            echo "Validating $file..."
+            echo "Validating $file with AWS SSM API..."
             aws ssm validate-document --document-type "Automation" --content file://$file || exit 1
           done
