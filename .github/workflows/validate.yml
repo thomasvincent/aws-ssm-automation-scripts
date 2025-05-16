@@ -36,18 +36,20 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Validate SSM document syntax
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          
+      - name: Install AWS CLI
         run: |
-          pip install pyyaml
-          echo "Validating YAML structure of SSM documents..."
+          pip install awscli
+          
+      - name: Validate SSM Documents
+        run: |
           for file in $(find . -name "*.yaml" -not -path "*/\.*"); do
             echo "Validating $file..."
-            # Just validate the YAML can be parsed properly
-            python3 -c "import yaml, json, sys; yaml.safe_load(open('$file', 'r'))"
-            if [ $? -ne 0 ]; then
-              echo "Error parsing $file"
-              exit 1
-            fi
-            echo "$file is valid YAML"
+            aws ssm validate-document --document-type "Automation" --content file://$file || exit 1
           done
-          echo "All SSM documents are valid YAML"

@@ -1,69 +1,24 @@
 name: Create Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version_type:
-        description: 'Type of version bump to apply'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+  push:
+    tags:
+      - 'v*.*.*'
 
 jobs:
-  prepare-release:
-    name: Prepare Release
+  build:
+    name: Create Release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      
-      - name: Setup Git
-        run: |
-          git config user.name "${GITHUB_ACTOR}"
-          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
           
-      - name: Bump version
-        id: bump_version
-        run: |
-          npm run version-bump ${{ github.event.inputs.version_type }}
-          VERSION=$(node -p "require('./package.json').version")
-          echo "VERSION=v${VERSION}" >> $GITHUB_OUTPUT
-      
-      - name: Commit and push version bump
-        run: |
-          git add package.json
-          git commit -m "chore: bump version to ${{ steps.bump_version.outputs.VERSION }}"
-          git tag ${{ steps.bump_version.outputs.VERSION }}
-          # Don't push to main - let PR process handle that
-          git push origin ${{ steps.bump_version.outputs.VERSION }}
-      
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      - name: Update README
-        run: |
-          pip install pyyaml
-          npm run update-readme
-      
-      - name: Create package
-        run: |
-          npm run package
-      
+      - name: Get the version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
       - name: Generate changelog
         id: changelog
         uses: metcalfc/changelog-generator@v4.0.1
@@ -76,8 +31,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.bump_version.outputs.VERSION }}
-          release_name: Release ${{ steps.bump_version.outputs.VERSION }}
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
           body: |
             ## Changes in this Release
             
@@ -93,16 +48,5 @@ jobs:
             - `create_and_tag_resources.yaml`: Creates and tags AWS resources
             - `security_group_audit.yaml`: Audits and remediates security groups
             - `maintenance_window_setup.yaml`: Sets up SSM maintenance windows
-            - `lambda_function_management.yaml`: Creates, updates, and manages AWS Lambda functions
-            - `cloudfront_distribution_management.yaml`: Manages AWS CloudFront distributions
           draft: false
           prerelease: false
-      
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            dist/*.zip
-          tag_name: ${{ steps.bump_version.outputs.VERSION }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

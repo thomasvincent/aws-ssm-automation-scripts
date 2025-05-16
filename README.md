@@ -161,6 +161,16 @@ For TAG type, provide the tag key.
     - `ExcludedSecurityGroups`: (Optional) List of security group IDs to exclude from remediation.
     - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
 
+## Shared Python Modules
+
+This repository includes shared Python modules in the `shared/python` directory that provide common functionality for the SSM automation documents:
+
+- **`aws_helpers.py`**: General AWS helper functions (logging, tagging, parameter validation, etc.)
+- **`config_manager.py`**: Configuration management from SSM Parameter Store or S3
+- **`security_helpers.py`**: Security-related helper functions (encryption checks, security group auditing, etc.)
+
+See the [shared README](shared/README.md) for more details.
+
 ## Usage
 
 1. Clone this repository or download the specific script you need
