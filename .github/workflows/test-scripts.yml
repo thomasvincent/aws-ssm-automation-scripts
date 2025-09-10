@@ -15,15 +15,15 @@ jobs:
     # Only run this job if explicitly approved in the PR comments
     if: contains(github.event.pull_request.labels.*.name, 'safe-to-test')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
           
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           aws-access-key-id: ${{ secrets.SANDBOX_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.SANDBOX_AWS_SECRET_ACCESS_KEY }}
