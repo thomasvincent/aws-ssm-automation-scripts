@@ -3,244 +3,417 @@
 [![Validate SSM Documents](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/validate.yml/badge.svg)](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/validate.yml)
 [![Security Scan](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/security-scan.yml/badge.svg)](https://github.com/thomasvincent/aws-ssm-automation-scripts/actions/workflows/security-scan.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub release](https://img.shields.io/github/v/release/thomasvincent/aws-ssm-automation-scripts)](https://github.com/thomasvincent/aws-ssm-automation-scripts/releases)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/thomasvincent/aws-ssm-automation-scripts/graphs/commit-activity)
 
-This repository contains a collection of AWS Systems Manager (SSM) Automation documents that help automate various AWS management and operational tasks. These scripts follow AWS best practices and can be used to streamline common operational tasks.
+A comprehensive collection of production-ready AWS Systems Manager (SSM) Automation documents for streamlining AWS operations, security compliance, and cost optimization.
 
-## Scripts
+## 🚀 Overview
 
-### CDN Management
+This repository provides battle-tested SSM Automation documents that help DevOps teams, system administrators, and cloud engineers automate common AWS management tasks. All scripts follow AWS best practices and are designed to be idempotent, secure, and easily customizable.
 
-- **`cloudfront_distribution_management.yaml`**: Manages AWS CloudFront distributions, including creation, update, invalidation and security configuration
-  - Parameters:
-    - `Operation`: (Required) The operation to perform.
-    - `DistributionId`: (Optional) The ID of an existing CloudFront distribution. Required for all operations except Create.
-    - `OriginDomainName`: (Optional) The origin domain name for the distribution. Required for Create operation.
-    - `OriginPath`: (Optional) The origin path for the distribution.
-    - `OriginId`: (Optional) The ID for the origin. If not provided, one will be generated automatically.
-    - `Comment`: (Optional) A comment about the distribution.
-    - `Enabled`: (Optional) Whether the distribution is enabled to accept end user requests.
-    - `PriceClass`: (Optional) The price class for the distribution.
-    - `DefaultRootObject`: (Optional) The default root object for the distribution.
-    - `DefaultCacheBehavior`: (Optional) The default cache behavior configuration as a JSON string. If not provided, default settings will be used. Example:
-  {"ViewerProtocolPolicy":"redirect-to-https",
-   "AllowedMethods":["GET","HEAD"],
-   "CachedMethods":["GET","HEAD"],
-   "DefaultTTL":86400}
-    - `CacheBehaviors`: (Optional) A map of path patterns to cache behaviors as a JSON string.
-    - `ViewerCertificateConfig`: (Optional) Viewer certificate configuration as a JSON string.
-    - `LoggingConfig`: (Optional) Logging configuration as a JSON string. Example:
-  {"Bucket":"logs-bucket.s3.amazonaws.com",
-   "Prefix":"distribution-logs/",
-   "IncludeCookies":false}
-    - `PathsToInvalidate`: (Optional) A list of paths to invalidate. Required for Invalidate operation.
-    - `UseSSL`: (Optional) Whether to use HTTPS for communication with the origin.
-    - `SecurityPolicyConfig`: (Optional) Security policy configuration as a JSON string. Required for UpdateSecurityConfig operation. Example: {"MinimumProtocolVersion":"TLSv1.2_2019","SecurityPolicy":"TLSv1.2_2019"}
-    - `AlternateDomainNames`: (Optional) A list of CNAME aliases to associate with the distribution.
-    - `CustomHeaders`: (Optional) Custom headers to add to origin requests as a JSON string.
-    - `GeoRestriction`: (Optional) Geo-restriction configuration as a JSON string. Example: {"RestrictionType":"whitelist","Locations":["US","CA","GB"]}
-    - `Tags`: (Optional) Tags for the CloudFront distribution as a JSON string.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+### Key Benefits
 
-### EC2 Management
+- **🔄 Automation First**: Reduce manual operations and human error
+- **🔒 Security by Default**: Built-in security best practices and compliance checks
+- **💰 Cost Optimization**: Identify and remediate cost inefficiencies
+- **🌍 Multi-Account Support**: Manage resources across multiple AWS accounts
+- **📊 Comprehensive Logging**: Detailed execution logs and audit trails
+- **🧩 Modular Design**: Reusable components and shared libraries
 
-- **`ec2_instance_patching.yaml`**: Patches EC2 instances with security updates
-  - Parameters:
-    - `InstanceIds`: (Required) List of EC2 instance IDs to patch.
-    - `RebootOption`: (Optional) Whether to reboot instances after patching.
-    - `PatchSeverity`: (Optional) The severity level of patches to apply.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+## 📚 Table of Contents
 
-### IAM Management
+- [Quick Start](#-quick-start)
+- [Available Automation Scripts](#-available-automation-scripts)
+- [Installation](#-installation)
+- [Usage Examples](#-usage-examples)
+- [Architecture](#-architecture)
+- [Best Practices](#-best-practices)
+- [Development](#-development)
+- [Contributing](#-contributing)
+- [Support](#-support)
 
-- **`attach_policies_to_role.yaml`**: Attach policies to an IAM role
-  - Parameters:
-    - `RoleName`: (Required) The name of the IAM role to attach policies to.
-    - `AWSManagedPolicies`: (Optional) A list of AWS managed policies to attach to the role.
-    - `CustomerManagedPolicies`: (Optional) A list of customer managed policies to attach to the role.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+## 🎯 Quick Start
 
-### Lambda Management
+```bash
+# 1. Clone the repository
+git clone https://github.com/thomasvincent/aws-ssm-automation-scripts.git
 
-- **`lambda_function_management.yaml`**: Creates, updates, and manages AWS Lambda functions
-  - Parameters:
-    - `Operation`: (Required) The operation to perform.
-    - `FunctionName`: (Required) The name of the Lambda function.
-    - `S3Bucket`: (Optional) S3 bucket containing the Lambda deployment package. Required for Create and Update operations.
-    - `S3Key`: (Optional) S3 key for the Lambda deployment package. Required for Create and Update operations.
-    - `Handler`: (Optional) The function within your code that Lambda calls to begin execution.
-    - `Runtime`: (Optional) The runtime environment for the Lambda function.
-    - `MemorySize`: (Optional) The amount of memory available to the function at runtime.
-    - `Timeout`: (Optional) The amount of time that Lambda allows a function to run before stopping it.
-    - `Role`: (Required for Create) The ARN of the IAM role that Lambda assumes when it executes your function.
-    - `Environment`: (Optional) Environment variables for the Lambda function, provided as a JSON string.
-    - `Tags`: (Optional) Tags for the Lambda function, provided as a JSON string.
-    - `ReservedConcurrentExecutions`: (Optional) The number of reserved concurrent executions for this function.
-    - `AliasName`: (Optional) Name of the Lambda alias to create or update. Required for AddAlias operation.
-    - `AliasVersion`: (Optional) Function version that the alias invokes. Required for AddAlias operation.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+# 2. Register an SSM document
+aws ssm create-document \
+  --name "EnableS3Encryption" \
+  --document-type "Automation" \
+  --content file://s3_encryption.yaml
 
-### Maintenance Windows
+# 3. Execute the automation
+aws ssm start-automation-execution \
+  --document-name "EnableS3Encryption" \
+  --parameters '{"BucketName":["my-bucket"],"KMSMasterKey":["arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"]}'
+```
 
-- **`maintenance_window_setup.yaml`**: Creates an SSM maintenance window with tasks
-  - Parameters:
-    - `WindowName`: (Required) The name of the maintenance window.
-    - `WindowDescription`: (Optional) The description of the maintenance window.
-    - `Schedule`: (Required) The schedule of the maintenance window in cron or rate expression.
-    - `Duration`: (Required) The duration of the maintenance window in hours.
-    - `Cutoff`: (Required) The number of hours before the end of the maintenance window that the system stops scheduling new tasks.
-    - `TargetType`: (Required) The type of targets to register with the maintenance window.
-    - `TargetKey`: (Required) The key for the target. For INSTANCE type, provide comma-separated instance IDs.
-For TAG type, provide the tag key.
+## 📦 Available Automation Scripts
 
-    - `TargetValue`: (Required for TAG type) The value for the target key. For TAG type, provide the tag values.
-    - `TaskType`: (Required) The type of task to register with the maintenance window.
-    - `TaskDocumentName`: (Required) The name of the task document to run.
-    - `TaskParameters`: (Optional) The parameters for the task.
-    - `ServiceRoleArn`: (Required) The service role ARN for the maintenance window tasks.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+### CDN & Content Delivery
 
-### Other Utilities
+#### 📡 CloudFront Distribution Management
+**File**: `cloudfront_distribution_management.yaml`
 
-- **`cost_optimization_recommendations.yaml`**: Identifies cost optimization opportunities across AWS resources
-  - Parameters:
-    - `ResourceTypes`: (Optional) Types of resources to check (EC2, EBS, S3, RDS, etc.)
-    - `Region`: (Optional) AWS region to check. If not specified, the current region will be used.
-    - `IdleDaysThreshold`: (Optional) Number of days of inactivity to consider a resource idle.
-    - `LowUtilizationThreshold`: (Optional) CPU utilization percentage below which to consider an instance underutilized.
-    - `NotificationTopicArn`: (Optional) SNS topic ARN to send notifications.
-    - `GenerateReport`: (Optional) Whether to generate an HTML report of findings.
-    - `ReportS3Bucket`: (Optional) S3 bucket to store the HTML report.
-    - `ReportS3Prefix`: (Optional) S3 key prefix for the HTML report.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+Comprehensive CloudFront distribution lifecycle management including creation, updates, invalidations, and security configuration.
+
+**Key Features**:
+- Create and configure new distributions
+- Update existing distribution settings
+- Perform cache invalidations
+- Configure security policies and geo-restrictions
+- Manage custom headers and behaviors
+
+<details>
+<summary>View Parameters</summary>
+
+- `Operation`: The operation to perform (Create, Update, Invalidate, UpdateSecurityConfig)
+- `DistributionId`: ID of existing distribution (required for updates)
+- `OriginDomainName`: Origin domain name (required for creation)
+- `PriceClass`: CloudFront price class
+- `ViewerCertificateConfig`: SSL/TLS certificate configuration
+- `GeoRestriction`: Geographic access restrictions
+- [See full parameter list in script]
+
+</details>
+
+### Compute & Instance Management
+
+#### 🖥️ EC2 Instance Patching
+**File**: `ec2_instance_patching.yaml`
+
+Automated patching solution for EC2 instances with configurable reboot options and severity filters.
+
+**Key Features**:
+- Selective patching based on severity levels
+- Optional automatic reboot after patching
+- Parallel patching support
+- Detailed patch compliance reporting
+
+<details>
+<summary>View Parameters</summary>
+
+- `InstanceIds`: List of EC2 instance IDs to patch
+- `RebootOption`: Whether to reboot after patching (NoReboot, RebootIfNeeded)
+- `PatchSeverity`: Minimum severity level (Critical, Important, Medium, Low)
+- `AutomationAssumeRole`: IAM role for automation execution
+
+</details>
+
+### Security & Compliance
+
+#### 🔐 Security Group Audit
+**File**: `security_group_audit.yaml`
+
+Comprehensive security group auditing and automated remediation for compliance.
+
+**Key Features**:
+- Identify overly permissive rules (0.0.0.0/0)
+- Automatic remediation of high-risk ports
+- Compliance reporting
+- Exclusion list support
+- VPC-specific auditing
+
+<details>
+<summary>View Parameters</summary>
+
+- `SecurityGroupIds`: Specific security groups to audit (optional)
+- `VpcIds`: VPCs to audit (optional)
+- `RemediationMode`: Audit or Remediate
+- `RemediateOpenPorts`: Ports to close if open to internet
+- `ExcludedSecurityGroups`: Security groups to exclude
+
+</details>
+
+#### 🔑 S3 Bucket Encryption
+**File**: `s3_encryption.yaml`
+
+Enable KMS encryption on S3 buckets with verification.
+
+**Key Features**:
+- Apply KMS encryption to existing buckets
+- Verify encryption status
+- Support for customer-managed KMS keys
+- Bucket existence validation
+
+### Cost Optimization
+
+#### 💰 Cost Optimization Recommendations
+**File**: `cost_optimization_recommendations.yaml`
+
+Identify and report cost optimization opportunities across your AWS infrastructure.
+
+**Key Features**:
+- Identify idle and underutilized resources
+- Generate detailed HTML reports
+- SNS notifications for findings
+- Multi-resource type analysis (EC2, EBS, RDS, etc.)
+- Customizable utilization thresholds
+
+<details>
+<summary>View Parameters</summary>
+
+- `ResourceTypes`: Resources to analyze (EC2, EBS, S3, RDS)
+- `IdleDaysThreshold`: Days of inactivity to consider idle
+- `LowUtilizationThreshold`: CPU threshold for underutilization
+- `GenerateReport`: Generate HTML report
+- `ReportS3Bucket`: S3 bucket for reports
+
+</details>
+
+### IAM & Access Management
+
+#### 👤 Attach Policies to Role
+**File**: `attach_policies_to_role.yaml`
+
+Streamline IAM role configuration by attaching multiple policies.
+
+**Key Features**:
+- Attach AWS managed policies
+- Attach customer managed policies
+- Bulk policy attachment
+- Validation and error handling
+
+### Lambda Functions
+
+#### ⚡ Lambda Function Management
+**File**: `lambda_function_management.yaml`
+
+Complete Lambda function lifecycle management.
+
+**Key Features**:
+- Create new functions from S3 packages
+- Update function code and configuration
+- Manage aliases and versions
+- Configure environment variables
+- Set reserved concurrent executions
+
+<details>
+<summary>View Parameters</summary>
+
+- `Operation`: Operation type (Create, Update, Delete, AddAlias)
+- `FunctionName`: Lambda function name
+- `S3Bucket`: Deployment package bucket
+- `S3Key`: Deployment package key
+- `Handler`: Function handler
+- `Runtime`: Lambda runtime
+- `MemorySize`: Memory allocation (MB)
+- `Timeout`: Execution timeout (seconds)
+
+</details>
+
+### Maintenance & Operations
+
+#### 🔧 Maintenance Window Setup
+**File**: `maintenance_window_setup.yaml`
+
+Create and configure SSM Maintenance Windows for scheduled operations.
+
+**Key Features**:
+- Flexible scheduling with cron expressions
+- Target registration (instances or tags)
+- Task configuration
+- Service role management
+
+### Multi-Account Management
+
+#### 🌐 Cross-Account Resource Management
+**File**: `cross_account_resource_management.yaml`
+
+Manage resources across multiple AWS accounts from a central location.
+
+**Key Features**:
+- Assume role across accounts
+- Parallel account processing
+- Multi-region support
+- Comprehensive error handling
+- SNS notifications
+
+<details>
+<summary>View Parameters</summary>
+
+- `Operation`: Cross-account operation type
+- `TargetAccounts`: List of AWS account IDs
+- `TargetRegions`: AWS regions to target
+- `CrossAccountRoleName`: Role name to assume
+- `MaxConcurrentAccounts`: Parallel execution limit
+
+</details>
 
 ### Resource Management
 
-- **`create_and_tag_resources.yaml`**: Creates AWS resources and applies consistent tagging
-  - Parameters:
-    - `ResourceType`: (Required) Type of AWS resource to create (e.g., EC2, S3, RDS).
-    - `ResourceName`: (Required) Name to give the created resource.
-    - `ResourceParameters`: (Required) JSON object containing parameters specific to the resource type.
-    - `Environment`: (Required) Environment this resource belongs to.
-    - `Department`: (Required) Department this resource belongs to.
-    - `Project`: (Required) Project this resource belongs to.
-    - `Owner`: (Required) Owner of this resource (typically an email address).
-    - `CostCenter`: (Required) Cost center for billing this resource.
-    - `AdditionalTags`: (Optional) Additional tags to apply to the resource.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+#### 🏗️ Create and Tag Resources
+**File**: `create_and_tag_resources.yaml`
 
-- **`cross_account_resource_management.yaml`**: Manages resources across multiple AWS accounts
-  - Parameters:
-    - `Operation`: (Required) The operation to perform across accounts.
-    - `TargetAccounts`: (Required) List of AWS account IDs to perform the operation against.
-    - `TargetRegions`: (Optional) AWS regions to target. If not specified, only the current region will be used.
-    - `CrossAccountRoleName`: (Required) The name of the IAM role to assume in target accounts. Must be the same name across all accounts.
-    - `ResourceType`: (Optional) Type of resource to operate on. Required for CreateResources, TagResources, UpdateSecurityGroups.
-    - `ResourceParameters`: (Optional) Parameters specific to the resource type and operation.
-    - `TagKey`: (Optional) Tag key when performing TagResources operation.
-    - `TagValue`: (Optional) Tag value when performing TagResources operation.
-    - `MaxConcurrentAccounts`: (Optional) Maximum number of accounts to process concurrently.
-    - `NotificationTopicArn`: (Optional) SNS Topic ARN to send operation notifications to.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+Standardized resource creation with consistent tagging strategy.
 
-### S3 Management
+**Key Features**:
+- Support multiple resource types
+- Enforce tagging standards
+- Cost center allocation
+- Environment classification
+- Department and project tracking
 
-- **`s3_encryption.yaml`**: Enables server-side encryption on an S3 bucket using a KMS key
-  - Parameters:
-    - `BucketName`: (Required) The name of the S3 Bucket to enable encryption on.
-    - `KMSMasterKey`: (Required) The ARN of the KMS customer master key (CMK) to use for the default encryption.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+## 🛠️ Shared Python Modules
 
-### Security Management
+The repository includes reusable Python modules in `shared/python/`:
 
-- **`security_group_audit.yaml`**: Audits and remediates security groups for public access and best practices
-  - Parameters:
-    - `SecurityGroupIds`: (Optional) List of security group IDs to audit. If not provided, all security groups in the account will be audited.
-    - `VpcIds`: (Optional) List of VPC IDs to audit security groups in. If not provided, security groups in all VPCs will be audited.
-    - `RemediationMode`: (Optional) The remediation mode to use. Audit will only report issues, Remediate will fix them.
-    - `RemediateOpenPorts`: (Optional) List of ports to remediate if open to 0.0.0.0/0. Default is common high-risk ports.
-    - `ExcludedSecurityGroups`: (Optional) List of security group IDs to exclude from remediation.
-    - `AutomationAssumeRole`: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+### aws_helpers.py
+- General AWS utility functions
+- Logging configuration
+- Tag creation and management
+- Parameter validation
+- Error handling utilities
 
-## Shared Python Modules
+### config_manager.py
+- Configuration from SSM Parameter Store
+- S3-based configuration management
+- Environment-specific settings
+- Dynamic configuration updates
 
-This repository includes shared Python modules in the `shared/python` directory that provide common functionality for the SSM automation documents:
+### security_helpers.py
+- Security group analysis
+- Encryption status checks
+- Compliance validation
+- Security best practices enforcement
 
-- **`aws_helpers.py`**: General AWS helper functions (logging, tagging, parameter validation, etc.)
-- **`config_manager.py`**: Configuration management from SSM Parameter Store or S3
-- **`security_helpers.py`**: Security-related helper functions (encryption checks, security group auditing, etc.)
+## 📥 Installation
 
-See the [shared README](shared/README.md) for more details.
-
-## Usage
-
-1. Clone this repository or download the specific script you need
-2. Upload the script to your S3 bucket
-3. Register the document in AWS SSM using the AWS CLI:
+### Method 1: Direct AWS Registration
 
 ```bash
-aws ssm create-document \
-  --name "MyS3EncryptionDocument" \
-  --document-type "Automation" \
-  --content file://s3_encryption.yaml
+# Register all documents at once
+for file in *.yaml; do
+  name=$(basename "$file" .yaml)
+  aws ssm create-document \
+    --name "$name" \
+    --document-type "Automation" \
+    --content "file://$file"
+done
 ```
 
-4. Run the automation using the AWS CLI or AWS Console:
+### Method 2: Using AWS CloudFormation
+
+```yaml
+Resources:
+  S3EncryptionDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: EnableS3Encryption
+      DocumentType: Automation
+      Content: !Sub |
+        ${file(s3_encryption.yaml)}
+```
+
+### Method 3: Terraform
+
+```hcl
+resource "aws_ssm_document" "s3_encryption" {
+  name          = "EnableS3Encryption"
+  document_type = "Automation"
+  content       = file("${path.module}/s3_encryption.yaml")
+}
+```
+
+## 📖 Usage Examples
+
+### Example 1: Enable S3 Bucket Encryption
 
 ```bash
 aws ssm start-automation-execution \
-  --document-name "MyS3EncryptionDocument" \
-  --parameters '{"BucketName":["my-bucket"],"KMSMasterKey":["arn:aws:kms:region:account:key/key-id"]}'
+  --document-name "s3_encryption" \
+  --parameters '{
+    "BucketName": ["my-data-bucket"],
+    "KMSMasterKey": ["arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"]
+  }'
 ```
 
-### Using Shared Python Modules
-
-To use the shared Python modules in your SSM documents:
-
-1. Upload the modules to an S3 bucket:
+### Example 2: Patch EC2 Instances
 
 ```bash
-aws s3 cp --recursive shared/python s3://your-bucket-name/shared/python/
+aws ssm start-automation-execution \
+  --document-name "ec2_instance_patching" \
+  --parameters '{
+    "InstanceIds": ["i-1234567890abcdef0", "i-0987654321fedcba0"],
+    "RebootOption": ["RebootIfNeeded"],
+    "PatchSeverity": ["Critical"]
+  }'
 ```
 
-2. In your SSM document's Python script, add code to import the modules from S3:
+### Example 3: Audit Security Groups
 
-```python
-import sys
-import os
-import boto3
-
-# Import shared modules from S3
-s3 = boto3.resource('s3')
-bucket_name = 'your-bucket-name'
-prefix = 'shared/python'
-
-# Create a temporary directory to store the modules
-temp_dir = '/tmp/shared'
-os.makedirs(temp_dir, exist_ok=True)
-
-# Download the modules
-for obj in s3.Bucket(bucket_name).objects.filter(Prefix=prefix):
-    if obj.key.endswith('.py'):
-        local_file = f"{temp_dir}/{os.path.basename(obj.key)}"
-        s3.meta.client.download_file(bucket_name, obj.key, local_file)
-
-# Add to Python path
-sys.path.append(temp_dir)
-
-# Now you can import the modules
-from aws_helpers import setup_logging, create_standard_tags
+```bash
+aws ssm start-automation-execution \
+  --document-name "security_group_audit" \
+  --parameters '{
+    "RemediationMode": ["Audit"],
+    "RemediateOpenPorts": ["22", "3389", "3306"],
+    "VpcIds": ["vpc-12345678"]
+  }'
 ```
 
-## Cross-Account Operations
+### Example 4: Cross-Account Operations
 
-The `cross_account_resource_management.yaml` document allows you to perform operations across multiple AWS accounts. To use it:
+```bash
+aws ssm start-automation-execution \
+  --document-name "cross_account_resource_management" \
+  --parameters '{
+    "Operation": ["TagResources"],
+    "TargetAccounts": ["111111111111", "222222222222"],
+    "CrossAccountRoleName": ["SSMCrossAccountRole"],
+    "TagKey": ["Environment"],
+    "TagValue": ["Production"]
+  }'
+```
 
-1. Create an IAM role in each target account with the same name (e.g., `SSMCrossAccountRole`)
-2. Configure the trust relationship to allow the automation account to assume the role
-3. Register the document in the automation account
-4. Run the automation with the appropriate parameters
+## 🏗️ Architecture
 
-Example trust policy for the cross-account role:
+### Document Structure
+
+```
+aws-ssm-automation-scripts/
+├── *.yaml                    # SSM Automation documents
+├── shared/                   # Shared modules
+│   └── python/              # Python helper modules
+│       ├── aws_helpers.py
+│       ├── config_manager.py
+│       └── security_helpers.py
+├── .github/                 # GitHub Actions workflows
+│   └── workflows/
+│       ├── validate.yml     # Document validation
+│       ├── security-scan.yml # Security scanning
+│       └── release.yml      # Automated releases
+└── tests/                   # Test scripts (if applicable)
+```
+
+### Execution Flow
+
+```mermaid
+graph TD
+    A[User/Application] -->|Initiates| B[SSM Automation]
+    B --> C{Document Type}
+    C -->|EC2| D[Instance Operations]
+    C -->|S3| E[Bucket Operations]
+    C -->|Security| F[Compliance Checks]
+    C -->|Cross-Account| G[Assume Role]
+    G --> H[Target Account Operations]
+    D --> I[Logging/Reporting]
+    E --> I
+    F --> I
+    H --> I
+    I --> J[CloudWatch Logs]
+    I --> K[S3 Reports]
+    I --> L[SNS Notifications]
+```
+
+## ✅ Best Practices
+
+### 1. IAM Permissions
+
+Always use least privilege principles:
 
 ```json
 {
@@ -248,85 +421,171 @@ Example trust policy for the cross-account role:
   "Statement": [
     {
       "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::AUTOMATION_ACCOUNT_ID:root"
-      },
-      "Action": "sts:AssumeRole",
-      "Condition": {}
+      "Action": [
+        "ssm:StartAutomationExecution",
+        "ssm:GetAutomationExecution"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/SSMAutomationRole"
     }
   ]
 }
 ```
 
-## CI/CD Pipeline
+### 2. Error Handling
 
-This repository uses GitHub Actions for continuous integration and continuous deployment:
+All documents include proper error handling:
+- `onFailure` actions (Abort, Continue)
+- Retry logic where appropriate
+- Detailed error logging
 
-- **Validation**: All YAML files are automatically linted and validated when pushed
-- **Security Scanning**: CodeQL security scanning is performed on all code changes
-- **Automated Testing**: Scripts can be tested in a sandbox environment when approved
-- **Automatic Releases**: New releases are created automatically when version tags are pushed
-- **Dependency Management**: Dependabot keeps dependencies up to date
+### 3. Tagging Strategy
 
-## Releases and Versioning
+Implement consistent tagging:
+```yaml
+Tags:
+  Environment: Production
+  Department: DevOps
+  Project: Infrastructure
+  Owner: team@example.com
+  CostCenter: CC-12345
+```
 
-This repository uses semantic versioning (SemVer) for releases and is published to GitHub Packages.
+### 4. Testing
 
-### Installing from GitHub Packages
+Test in non-production first:
+1. Use sandbox/development accounts
+2. Target test resources
+3. Review execution logs
+4. Validate results
 
-You can install these automation scripts from GitHub Packages:
+## 🔧 Development
+
+### Creating New Documents
+
+1. Use the template structure:
+```yaml
+---
+description: Clear description of what this document does
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  # Define all parameters
+mainSteps:
+  # Define automation steps
+```
+
+2. Follow naming conventions:
+   - Use snake_case for file names
+   - Use PascalCase for parameters
+   - Use camelCase for step names
+
+3. Include comprehensive documentation
+
+### Testing Locally
 
 ```bash
-# Configure npm to use GitHub Packages (first time only)
-echo "@thomasvincent:registry=https://npm.pkg.github.com" >> .npmrc
+# Validate YAML syntax
+python -c "import yaml; yaml.safe_load(open('document.yaml'))"
 
-# Install the package
-npm install @thomasvincent/aws-ssm-automation-scripts
+# Test with dry-run (if supported)
+aws ssm start-automation-execution \
+  --document-name "TestDocument" \
+  --parameters '{"DryRun":["true"]}'
 ```
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### How to Contribute
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-automation`)
+3. Commit your changes (`git commit -m 'Add amazing automation'`)
+4. Push to the branch (`git push origin feature/amazing-automation`)
+5. Open a Pull Request
+
+### Contribution Guidelines
+
+- Follow existing document structure
+- Include comprehensive parameter descriptions
+- Add usage examples to README
+- Ensure all YAML is valid
+- Test thoroughly before submitting
+
+## 🔄 CI/CD Pipeline
+
+### Automated Workflows
+
+- **Validation**: All YAML documents are validated on push
+- **Security Scanning**: CodeQL scans for security issues
+- **Automated Testing**: Integration tests in sandbox environment
+- **Release Management**: Semantic versioning with automated releases
+- **Dependency Updates**: Dependabot keeps dependencies current
 
 ### Release Process
 
-Releases are created automatically using GitHub Actions when a new version is created:
+Releases follow semantic versioning (MAJOR.MINOR.PATCH):
 
-1. A version bump is triggered using the workflow dispatch event
-2. The version is incremented in package.json (major, minor, or patch)
-3. A new tag and release is created with the new version number
-4. A zip file containing all the SSM documents is attached to the release
-5. The package is published to GitHub Packages
+- **MAJOR**: Breaking changes to document parameters
+- **MINOR**: New documents or features
+- **PATCH**: Bug fixes and minor improvements
 
-### Using the Release Assets
+## 📊 Monitoring & Logging
 
-The release assets (zip file) include all SSM documents and shared modules, ready to be deployed to AWS Systems Manager.
+### CloudWatch Integration
 
-## Best Practices
+All executions are logged to CloudWatch:
+```
+/aws/ssm/automation/{document-name}/{execution-id}
+```
 
-These scripts follow these AWS best practices:
+### Metrics to Monitor
 
-1. **Least Privilege**: Use IAM roles with minimal permissions needed for the task
-2. **Structured Parameters**: Clear parameter definitions with descriptions and constraints
-3. **Error Handling**: Proper error handling and recovery mechanisms
-4. **Idempotency**: Safe to run multiple times without unexpected side effects
-5. **Documentation**: Comprehensive documentation in the code and README
-6. **Consistent Structure**: Standardized document structure for easier understanding
-7. **Reusability**: Shared modules for common functionality
-8. **Multi-Account Support**: Cross-account resource management capabilities
-9. **Versioning**: Proper versioning and release management
+- Execution success/failure rates
+- Average execution duration
+- Resource modification counts
+- Cost optimization savings
 
-## Development
+## 🆘 Support
 
-To create new automation documents:
+### Documentation
+- [AWS SSM Documentation](https://docs.aws.amazon.com/systems-manager/)
+- [Automation Document Reference](https://docs.aws.amazon.com/systems-manager/latest/userguide/automation-documents.html)
 
-1. Use the existing scripts as templates
-2. Follow the same parameter structure and naming conventions
-3. Include proper error handling and validation
-4. Use the shared Python modules for common functionality
-5. Add comprehensive documentation in the script and README
-6. Test thoroughly before using in production
+### Getting Help
+- **Issues**: [GitHub Issues](https://github.com/thomasvincent/aws-ssm-automation-scripts/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/thomasvincent/aws-ssm-automation-scripts/discussions)
+- **Security Issues**: See [SECURITY.md](SECURITY.md)
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Contributing
+## 👏 Acknowledgments
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- AWS Systems Manager team for the automation framework
+- Contributors and users of these scripts
+- Open source community for inspiration and best practices
+
+## 🗺️ Roadmap
+
+- [ ] AWS Organizations integration
+- [ ] Cost optimization automation workflows
+- [ ] Disaster recovery automation
+- [ ] Compliance reporting dashboards
+- [ ] Integration with AWS Config rules
+- [ ] Slack/Teams notifications
+- [ ] Terraform module wrapper
+- [ ] Enhanced cross-region support
+
+---
+
+**Made with ❤️ by the DevOps community**
+
+For commercial support or custom automation development, please contact [Thomas Vincent](https://github.com/thomasvincent).
