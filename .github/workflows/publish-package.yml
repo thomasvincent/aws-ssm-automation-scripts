@@ -5,10 +5,17 @@ on:
   release:
     types: [created]
 
+# Cancel previous runs on the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+
 jobs:
   publish:
     name: Publish to GitHub Packages
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # Prevent hung jobs
     permissions:
       contents: read
       packages: write
