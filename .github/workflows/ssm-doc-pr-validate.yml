@@ -23,13 +23,49 @@ jobs:
           set -euo pipefail
           base_sha="${{ github.event.pull_request.base.sha }}"
           head_sha="${{ github.event.pull_request.head.sha }}"
-          files=$(git diff --name-only "$base_sha" "$head_sha" | grep -E '\\.ya?ml$' || true)
-          echo "Changed files:\n$files"
-          # Save as newline and space separated lists
+          files=$(git diff --name-only "$base_sha" "$head_sha" | grep -E '\\.(ya?ml)$' || true)
+          echo "Changed YAML files:\n$files"
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
           if [ -z "$files" ]; then echo "none=true" >> $GITHUB_OUTPUT; fi
+
+      - name: Determine SSM Automation docs and enforce naming
+        id: find-ssm
+        if: steps.diff.outputs.none != 'true'
+        run: |
+          set -euo pipefail
+          ssm_files=""
+          n_errors=0
+          # SSM docs policy: top-level *.yaml, snake_case: ^[a-z0-9_]+\.yaml$
+          for f in ${{ steps.diff.outputs.files }}; do
+            # Consider only top-level YAML
+            if [[ "$f" =~ ^[^/]+\.ya?ml$ ]]; then
+              # naming check only for .yaml files in repo root
+              if [[ "$f" =~ \.yaml$ ]]; then
+                base=$(basename "$f")
+                if [[ ! "$base" =~ ^[a-z0-9_]+\.yaml$ ]]; then
+                  echo "Naming violation: $f (must match ^[a-z0-9_]+\.yaml$)"
+                  n_errors=$((n_errors+1))
+                fi
+              fi
+              # detect SSM Automation doc by presence of schemaVersion and assumeRole keys
+              if grep -q "schemaVersion" "$f" && grep -q "assumeRole:" "$f"; then
+                ssm_files+="$f\n"
+              fi
+            fi
+          done
+          echo -e "SSM candidate files:\n$ssm_files"
+          echo "ssm_files<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$ssm_files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "n_errors=$n_errors" >> $GITHUB_OUTPUT
+
+      - name: Fail on naming convention violations
+        if: steps.find-ssm.outputs.n_errors != '0'
+        run: |
+          echo "SSM document naming violations found. Ensure files are top-level and match ^[a-z0-9_]+\.yaml$."
+          exit 1
 
       - name: Setup Python
         if: steps.diff.outputs.none != 'true'
@@ -74,11 +110,17 @@ PY
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Validate with AWS SSM API
+      - name: Validate with AWS SSM API (Automation docs only)
         if: steps.diff.outputs.none != 'true' && steps.aws-creds.outcome == 'success'
         run: |
           set -euo pipefail
-          for f in ${{ steps.diff.outputs.files }}; do
+          files="${{ steps.find-ssm.outputs.ssm_files }}"
+          if [ -z "$files" ]; then
+            echo "No SSM Automation docs changed. Skipping SSM API validation."
+            exit 0
+          fi
+          echo "$files" | while read -r f; do
+            [ -z "$f" ] && continue
             echo "Validating $f with SSM API"
             aws ssm validate-document --document-type Automation --content file://$f
           done

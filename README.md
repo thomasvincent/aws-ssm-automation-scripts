@@ -226,6 +226,22 @@ aws cloudformation deploy \
 
 Note: The EventBridge rule assumes a role that can `ssm:StartAutomationExecution` on the runbook and `iam:PassRole` for the `AutomationAssumeRole` you provide.
 
+##### Terraform schedule example
+A Terraform variant is available in `examples/terraform/cost_savings_schedule`.
+
+```bash
+cd examples/terraform/cost_savings_schedule
+terraform init
+terraform apply -auto-approve \
+  -var="document_name=CostSavingsRemediation" \
+  -var="automation_assume_role_arn=arn:aws:iam::111122223333:role/SSM-Automation-Execution-Role" \
+  -var="schedule_expression=cron(0 9 * * ? *)" \
+  -var="idle_days_threshold=30" \
+  -var="low_utilization_threshold=10" \
+  -var="snapshot_before_delete=true" \
+  -var="dry_run=true"
+```
+
 ### IAM & Access Management
 
 #### 👤 Attach Policies to Role
