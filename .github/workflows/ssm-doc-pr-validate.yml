@@ -100,6 +100,32 @@ PY
             $f || exit 1
           done
 
+      - name: Policy checks for SSM Automation docs
+        if: steps.diff.outputs.none != 'true'
+        env:
+          SSM_FILES: ${{ steps.find-ssm.outputs.ssm_files }}
+        run: |
+          python - << 'PY'
+import os, sys, yaml
+files = (os.environ.get('SSM_FILES') or '').strip().splitlines()
+errors = []
+for f in files:
+    if not f:
+        continue
+    with open(f, 'r') as fh:
+        doc = yaml.safe_load(fh)
+    sv = str(doc.get('schemaVersion', '')).strip()
+    ar = doc.get('assumeRole')
+    if sv != '0.3':
+        errors.append(f"{f}: schemaVersion must be '0.3' (found '{sv}')")
+    if not ar:
+        errors.append(f"{f}: 'assumeRole' is required at top level")
+if errors:
+    print("\n".join(errors))
+    sys.exit(1)
+print("Policy checks passed for SSM docs:\n" + "\n".join(files))
+PY
+
       - name: Configure AWS credentials (optional)
         id: aws-creds
         if: steps.diff.outputs.none != 'true'
