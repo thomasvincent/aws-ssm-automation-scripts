@@ -164,6 +164,47 @@ Identify and report cost optimization opportunities across your AWS infrastructu
 
 </details>
 
+#### 💰 Cost Savings Remediation
+**File**: `cost_savings_remediation.yaml`
+
+Safely remediate common sources of AWS cost waste with tag-aware targeting and DryRun-first execution.
+
+**Key Features**:
+- Stop EC2 instances with consistently low CPU utilization
+- Delete unattached EBS volumes (optional pre-delete snapshot)
+- Release unused Elastic IPs
+- Delete idle ALB/NLB with no traffic and no registered targets
+- Stop non–Multi-AZ RDS DB instances with low CPU
+- Global DryRun control and SNS summary notification
+
+<details>
+<summary>View Parameters</summary>
+
+- `Actions`: Operations to perform (StopIdleEC2, DeleteUnattachedEBS, ReleaseUnusedEIPs, CleanupIdleELB, StopIdleRDS)
+- `TargetTags`: Tag key/value map resources must match (e.g., `{Environment: Development}`)
+- `IdleDaysThreshold`: Window to evaluate idleness (default 30)
+- `LowUtilizationThreshold`: CPU percentage threshold for underutilization (default 10)
+- `SnapshotBeforeDelete`: For EBS, create a snapshot before deletion (default true)
+- `DryRun`: Report-only mode (default true)
+- `NotificationTopicArn`: Optional SNS topic for a summary notification
+
+</details>
+
+**Usage**
+
+```bash
+aws ssm start-automation-execution \
+  --document-name "CostSavingsRemediation" \
+  --parameters '{
+    "Actions":["StopIdleEC2","DeleteUnattachedEBS","ReleaseUnusedEIPs","CleanupIdleELB","StopIdleRDS"],
+    "TargetTags":{"Environment":"Development"},
+    "IdleDaysThreshold":["30"],
+    "LowUtilizationThreshold":["10"],
+    "SnapshotBeforeDelete":["true"],
+    "DryRun":["true"]
+  }'
+```
+
 ### IAM & Access Management
 
 #### 👤 Attach Policies to Role

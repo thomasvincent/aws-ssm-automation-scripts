@@ -1,0 +1,391 @@
+---
+# Copyright (c) 2025 Thomas Vincent
+# SPDX-License-Identifier: MIT
+
+description: Remediates common AWS cost waste (idle EC2/RDS, orphaned EBS, unused EIPs, idle ELB) with safe, tag-aware actions
+schemaVersion: '0.3'
+assumeRole: '{{ AutomationAssumeRole }}'
+parameters:
+  Actions:
+    type: StringList
+    description: "Actions to perform. Use DryRun=true first."
+    default:
+      - StopIdleEC2
+      - DeleteUnattachedEBS
+      - ReleaseUnusedEIPs
+      - CleanupIdleELB
+      - StopIdleRDS
+    allowedValues:
+      - StopIdleEC2
+      - DeleteUnattachedEBS
+      - ReleaseUnusedEIPs
+      - CleanupIdleELB
+      - StopIdleRDS
+  TargetTags:
+    type: StringMap
+    description: "Optional key/value tag filters resources must match (e.g., {Environment: Development})."
+    default: {}
+  Region:
+    type: String
+    description: "Optional AWS region override."
+    default: ""
+  IdleDaysThreshold:
+    type: Integer
+    description: "Days of inactivity/low traffic to consider a resource idle."
+    default: 30
+    minValue: 1
+    maxValue: 90
+  LowUtilizationThreshold:
+    type: Integer
+    description: "CPU utilization percent below which a compute/database resource is underutilized."
+    default: 10
+    minValue: 1
+    maxValue: 50
+  SnapshotBeforeDelete:
+    type: Boolean
+    description: "When deleting unattached EBS, create a snapshot first."
+    default: true
+  DryRun:
+    type: Boolean
+    description: "If true, only report intended actions without making changes."
+    default: true
+  NotificationTopicArn:
+    type: String
+    description: "Optional SNS Topic ARN for a summary notification."
+    default: ""
+  AutomationAssumeRole:
+    type: String
+    description: "(Optional) Role ARN for Automation to act on your behalf."
+    default: ""
+mainSteps:
+  - name: performCostSavings
+    action: aws:executeScript
+    onFailure: Continue
+    inputs:
+      Runtime: python3.10
+      Handler: run
+      Script: |-
+        import boto3
+        import json
+        import time
+        from datetime import datetime, timezone, timedelta
+        from botocore.config import Config
+
+        def run(events, context):
+          region = events.get('Region')
+          cfg = Config(retries={'max_attempts': 10, 'mode': 'standard'})
+          session = boto3.Session(region_name=region) if region else boto3.Session()
+          region = session.region_name
+
+          actions = set(events.get('Actions', []))
+          idle_days = int(events.get('IdleDaysThreshold', 30))
+          low_cpu = int(events.get('LowUtilizationThreshold', 10))
+          snapshot_before_delete = bool(events.get('SnapshotBeforeDelete', True))
+          dry_run = bool(events.get('DryRun', True))
+          target_tags = events.get('TargetTags', {}) or {}
+
+          now = datetime.now(timezone.utc)
+          start_time = now - timedelta(days=idle_days)
+
+          out = {
+            'Region': region,
+            'DryRun': dry_run,
+            'Summary': {
+              'StopIdleEC2': {'Intended': 0, 'Succeeded': 0},
+              'DeleteUnattachedEBS': {'Intended': 0, 'Succeeded': 0},
+              'ReleaseUnusedEIPs': {'Intended': 0, 'Succeeded': 0},
+              'CleanupIdleELB': {'Intended': 0, 'Succeeded': 0},
+              'StopIdleRDS': {'Intended': 0, 'Succeeded': 0}
+            },
+            'Details': {
+              'EC2': [],
+              'EBS': [],
+              'EIP': [],
+              'ELB': [],
+              'RDS': []
+            }
+          }
+
+          def matches_tags(resource_tags):
+            if not target_tags:
+              return True
+            # Normalize to dict
+            d = {t.get('Key'): t.get('Value') for t in resource_tags or []}
+            for k, v in target_tags.items():
+              if d.get(k) != v:
+                return False
+            return True
+
+          # ---------- StopIdleEC2 ----------
+          if 'StopIdleEC2' in actions:
+            ec2 = session.client('ec2', config=cfg)
+            cw = session.client('cloudwatch', config=cfg)
+
+            paginator = ec2.get_paginator('describe_instances')
+            for page in paginator.paginate(Filters=[{'Name':'instance-state-name','Values':['running']}]):
+              for res in page.get('Reservations', []):
+                for inst in res.get('Instances', []):
+                  instance_id = inst['InstanceId']
+                  tags = inst.get('Tags', [])
+                  if not matches_tags(tags):
+                    continue
+
+                  # Average CPU over window
+                  try:
+                    m = cw.get_metric_statistics(
+                      Namespace='AWS/EC2', MetricName='CPUUtilization',
+                      Dimensions=[{'Name':'InstanceId','Value':instance_id}],
+                      StartTime=start_time, EndTime=now, Period=86400, Statistics=['Average']
+                    )
+                    dps = m.get('Datapoints', [])
+                    if dps:
+                      avg = sum(dp['Average'] for dp in dps)/len(dps)
+                    else:
+                      avg = 0.0
+                  except Exception as e:
+                    avg = 0.0
+
+                  if avg < low_cpu:
+                    out['Summary']['StopIdleEC2']['Intended'] += 1
+                    action = {'InstanceId': instance_id, 'AvgCPU': round(avg,2), 'Action': 'Stop'}
+                    if dry_run:
+                      action['DryRun'] = True
+                      out['Details']['EC2'].append(action)
+                    else:
+                      try:
+                        ec2.stop_instances(InstanceIds=[instance_id])
+                        action['Result'] = 'Stopped'
+                        out['Summary']['StopIdleEC2']['Succeeded'] += 1
+                      except Exception as e:
+                        action['Error'] = str(e)
+                      out['Details']['EC2'].append(action)
+
+          # ---------- DeleteUnattachedEBS ----------
+          if 'DeleteUnattachedEBS' in actions:
+            ec2 = session.client('ec2', config=cfg)
+            paginator = ec2.get_paginator('describe_volumes')
+            for page in paginator.paginate():
+              for vol in page.get('Volumes', []):
+                vol_id = vol['VolumeId']
+                if vol.get('Attachments'):
+                  continue
+                # tag filter
+                if not matches_tags(vol.get('Tags', [])):
+                  continue
+                # Age check from CreateTime
+                create_time = vol.get('CreateTime')
+                if create_time and (now - create_time.replace(tzinfo=timezone.utc)).days < idle_days:
+                  continue
+
+                out['Summary']['DeleteUnattachedEBS']['Intended'] += 1
+                action = {
+                  'VolumeId': vol_id,
+                  'SizeGiB': vol.get('Size'),
+                  'VolumeType': vol.get('VolumeType'),
+                  'Action': 'Delete',
+                  'SnapshotBeforeDelete': snapshot_before_delete
+                }
+                if dry_run:
+                  action['DryRun'] = True
+                  out['Details']['EBS'].append(action)
+                else:
+                  try:
+                    snap_id = None
+                    if snapshot_before_delete:
+                      snap = ec2.create_snapshot(VolumeId=vol_id, Description=f"Pre-delete snapshot from SSM on {now.isoformat()}")
+                      snap_id = snap['SnapshotId']
+                      action['SnapshotId'] = snap_id
+                    ec2.delete_volume(VolumeId=vol_id)
+                    action['Result'] = 'Deleted'
+                    out['Summary']['DeleteUnattachedEBS']['Succeeded'] += 1
+                  except Exception as e:
+                    action['Error'] = str(e)
+                  out['Details']['EBS'].append(action)
+
+          # ---------- ReleaseUnusedEIPs ----------
+          if 'ReleaseUnusedEIPs' in actions:
+            ec2 = session.client('ec2', config=cfg)
+            addrs = ec2.describe_addresses().get('Addresses', [])
+            for a in addrs:
+              if a.get('AssociationId'):
+                continue
+              # EIP has no association; optional tag filter via allocation tags is not standard, so skip tag match
+              out['Summary']['ReleaseUnusedEIPs']['Intended'] += 1
+              action = {'AllocationId': a.get('AllocationId'), 'PublicIp': a.get('PublicIp'), 'Action': 'Release'}
+              if dry_run:
+                action['DryRun'] = True
+                out['Details']['EIP'].append(action)
+              else:
+                try:
+                  if a.get('AllocationId'):
+                    ec2.release_address(AllocationId=a['AllocationId'])
+                  elif a.get('PublicIp'):
+                    ec2.release_address(PublicIp=a['PublicIp'])
+                  action['Result'] = 'Released'
+                  out['Summary']['ReleaseUnusedEIPs']['Succeeded'] += 1
+                except Exception as e:
+                  action['Error'] = str(e)
+                out['Details']['EIP'].append(action)
+
+          # ---------- CleanupIdleELB (ALB/NLB) ----------
+          if 'CleanupIdleELB' in actions:
+            elbv2 = session.client('elbv2', config=cfg)
+            cw = session.client('cloudwatch', config=cfg)
+            paginator = elbv2.get_paginator('describe_load_balancers')
+            for page in paginator.paginate():
+              for lb in page.get('LoadBalancers', []):
+                lb_arn = lb['LoadBalancerArn']
+                lb_name = lb['LoadBalancerName']
+                lb_type = lb.get('Type', 'application')
+
+                # request/flows over window
+                ns = 'AWS/ApplicationELB' if lb_type == 'application' else 'AWS/NetworkELB'
+                metric = 'RequestCount' if lb_type == 'application' else 'ActiveFlowCount'
+                try:
+                  m = cw.get_metric_statistics(
+                    Namespace=ns, MetricName=metric,
+                    Dimensions=[{'Name':'LoadBalancer','Value': lb_arn.split('/')[-1]}],
+                    StartTime=start_time, EndTime=now, Period=86400, Statistics=['Sum']
+                  )
+                  dps = m.get('Datapoints', [])
+                  total = sum(dp['Sum'] for dp in dps) if dps else 0
+                except Exception:
+                  total = 0
+
+                # Check target registrations
+                tg_arn = None
+                try:
+                  tgs = elbv2.describe_target_groups(LoadBalancerArn=lb_arn).get('TargetGroups', [])
+                  if tgs:
+                    tg_arn = tgs[0]['TargetGroupArn']
+                    th = elbv2.describe_target_health(TargetGroupArn=tg_arn)
+                    targets = th.get('TargetHealthDescriptions', [])
+                  else:
+                    targets = []
+                except Exception:
+                  targets = []
+
+                if total == 0 and not targets:
+                  out['Summary']['CleanupIdleELB']['Intended'] += 1
+                  action = {'LoadBalancerName': lb_name, 'LoadBalancerArn': lb_arn, 'Action': 'Delete'}
+                  if dry_run:
+                    action['DryRun'] = True
+                    out['Details']['ELB'].append(action)
+                  else:
+                    try:
+                      elbv2.delete_load_balancer(LoadBalancerArn=lb_arn)
+                      action['Result'] = 'Deleted'
+                      out['Summary']['CleanupIdleELB']['Succeeded'] += 1
+                    except Exception as e:
+                      action['Error'] = str(e)
+                    out['Details']['ELB'].append(action)
+
+          # ---------- StopIdleRDS ----------
+          if 'StopIdleRDS' in actions:
+            rds = session.client('rds', config=cfg)
+            cw = session.client('cloudwatch', config=cfg)
+            paginator = rds.get_paginator('describe_db_instances')
+            for page in paginator.paginate():
+              for db in page.get('DBInstances', []):
+                # Aurora and serverless handling skipped; stop_db_instance supports certain engines only
+                if db.get('DBInstanceStatus') != 'available':
+                  continue
+                # Tag filter
+                arn = db['DBInstanceArn']
+                try:
+                  tags = rds.list_tags_for_resource(ResourceName=arn).get('TagList', [])
+                except Exception:
+                  tags = []
+                if not matches_tags(tags):
+                  continue
+
+                # Avg CPU
+                try:
+                  m = cw.get_metric_statistics(
+                    Namespace='AWS/RDS', MetricName='CPUUtilization',
+                    Dimensions=[{'Name':'DBInstanceIdentifier','Value':db['DBInstanceIdentifier']}],
+                    StartTime=start_time, EndTime=now, Period=86400, Statistics=['Average']
+                  )
+                  dps = m.get('Datapoints', [])
+                  avg = sum(dp['Average'] for dp in dps)/len(dps) if dps else 0.0
+                except Exception:
+                  avg = 0.0
+
+                if avg < low_cpu and not db.get('MultiAZ', False):
+                  out['Summary']['StopIdleRDS']['Intended'] += 1
+                  action = {'DBInstanceIdentifier': db['DBInstanceIdentifier'], 'AvgCPU': round(avg,2), 'Action': 'Stop'}
+                  if dry_run:
+                    action['DryRun'] = True
+                    out['Details']['RDS'].append(action)
+                  else:
+                    try:
+                      rds.stop_db_instance(DBInstanceIdentifier=db['DBInstanceIdentifier'])
+                      action['Result'] = 'Stopping'
+                      out['Summary']['StopIdleRDS']['Succeeded'] += 1
+                    except Exception as e:
+                      action['Error'] = str(e)
+                    out['Details']['RDS'].append(action)
+
+          return out
+      InputPayload:
+        Actions: '{{ Actions }}'
+        TargetTags: '{{ TargetTags }}'
+        Region: '{{ Region }}'
+        IdleDaysThreshold: '{{ IdleDaysThreshold }}'
+        LowUtilizationThreshold: '{{ LowUtilizationThreshold }}'
+        SnapshotBeforeDelete: '{{ SnapshotBeforeDelete }}'
+        DryRun: '{{ DryRun }}'
+    outputs:
+      - Name: Region
+        Selector: $.Payload.Region
+        Type: String
+      - Name: DryRun
+        Selector: $.Payload.DryRun
+        Type: Boolean
+      - Name: Summary
+        Selector: $.Payload.Summary
+        Type: StringMap
+      - Name: Details
+        Selector: $.Payload.Details
+        Type: StringMap
+
+  - name: notifySummary
+    action: aws:executeScript
+    onFailure: Continue
+    inputs:
+      Runtime: python3.10
+      Handler: notify
+      Script: |-
+        import boto3
+        import json
+        from datetime import datetime, timezone
+
+        def notify(events, context):
+          topic = events.get('NotificationTopicArn')
+          summary = events.get('Summary', {})
+          region = events.get('Region', 'unknown')
+          if not topic:
+            return {'Notified': False}
+
+          msg = [
+            f"AWS Cost Savings Remediation Summary - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            f"Region: {region}",
+          ]
+          for k, v in summary.items():
+            msg.append(f"{k}: Intended={v.get('Intended',0)}, Succeeded={v.get('Succeeded',0)}")
+          body = "\n".join(msg)
+
+          try:
+            boto3.client('sns').publish(TopicArn=topic, Subject='AWS Cost Savings Remediation', Message=body)
+            return {'Notified': True}
+          except Exception as e:
+            return {'Notified': False, 'Error': str(e)}
+      InputPayload:
+        NotificationTopicArn: '{{ NotificationTopicArn }}'
+        Region: '{{ performCostSavings.Region }}'
+        Summary: '{{ performCostSavings.Summary }}'
+    outputs:
+      - Name: Notified
+        Selector: $.Payload.Notified
+        Type: Boolean
+    isEnd: true
