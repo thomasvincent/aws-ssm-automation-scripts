@@ -76,7 +76,7 @@ jobs:
       - name: Install tools
         if: steps.diff.outputs.none != 'true'
         run: |
-          pip install --disable-pip-version-check yamllint pyyaml awscli
+          pip install --disable-pip-version-check yamllint pyyaml awscli jsonschema
 
       - name: Lint YAML
         if: steps.diff.outputs.none != 'true'
@@ -136,6 +136,17 @@ PY
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: JSON schema validation (Automation docs only)
+        if: steps.diff.outputs.none != 'true'
+        run: |
+          set -euo pipefail
+          files="${{ steps.find-ssm.outputs.ssm_files }}"
+          if [ -z "$files" ]; then
+            echo "No SSM Automation docs changed. Skipping schema validation."
+            exit 0
+          fi
+          python scripts/validate_ssm_schema.py $files
+
       - name: Validate with AWS SSM API (Automation docs only)
         if: steps.diff.outputs.none != 'true' && steps.aws-creds.outcome == 'success'
         run: |
@@ -145,6 +156,10 @@ PY
             echo "No SSM Automation docs changed. Skipping SSM API validation."
             exit 0
           fi
+          python - << 'PY'
+import os, subprocess, shlex
+files = os.environ.get('FILES','')
+PY
           echo "$files" | while read -r f; do
             [ -z "$f" ] && continue
             echo "Validating $f with SSM API"

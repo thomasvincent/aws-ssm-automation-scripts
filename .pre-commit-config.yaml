@@ -62,3 +62,8 @@ repos:
         entry: python scripts/ssm_policy_check.py
         language: system
         files: ^[^/]+\.ya?ml$
+      - id: ssm-schema-validate
+        name: ssm-schema-validate
+        entry: python scripts/validate_ssm_schema.py
+        language: system
+        files: ^[^/]+\.ya?ml$
