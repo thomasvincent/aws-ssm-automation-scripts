@@ -9,6 +9,7 @@ IDLE_DAYS ?= 30
 LOW_UTIL ?= 10
 SNAPSHOT_BEFORE_DELETE ?= true
 DRY_RUN ?= true
+BASE ?= origin/main
 
 help:
 	@echo "Targets:"
@@ -16,6 +17,8 @@ help:
 	@echo "  validate-docs        - aws ssm validate-document for top-level *.yaml"
 	@echo "  deploy-schedule-cfn  - Deploy EventBridge schedule via CloudFormation"
 	@echo "  deploy-schedule-tf   - Deploy EventBridge schedule via Terraform (in examples/terraform/cost_savings_schedule)"
+	@echo "  pr-docs              - List changed top-level YAML and SSM Automation docs vs $(BASE)"
+	@echo "  pr-validate-ssm      - Validate changed SSM Automation docs vs $(BASE) with aws ssm validate-document"
 
 register-docs:
 	@set -e; \
@@ -69,3 +72,27 @@ deploy-schedule-tf:
 	  -var="low_utilization_threshold=$(LOW_UTIL)" \
 	  -var="snapshot_before_delete=$(SNAPSHOT_BEFORE_DELETE)" \
 	  -var="dry_run=$(DRY_RUN)"
+
+pr-docs:
+	@set -e; \
+	git fetch origin >/dev/null 2>&1 || true; \
+	base=$$(git merge-base HEAD $(BASE) || echo $(BASE)); \
+	echo "Comparing against $$base"; \
+	files=$$(git diff --name-only $$base HEAD | grep -E '^[^/]+\.ya?ml$$' || true); \
+	echo "Changed top-level YAML:"; echo "$$files"; \
+	ssm=$$(echo "$$files" | xargs -I{} sh -c 'grep -q "schemaVersion" {} && grep -q "assumeRole:" {} && echo {}' || true); \
+	echo "Changed SSM Automation docs:"; echo "$$ssm"
+
+pr-validate-ssm:
+	@set -e; \
+	$(MAKE) pr-docs >/dev/null; \
+	git fetch origin >/dev/null 2>&1 || true; \
+	base=$$(git merge-base HEAD $(BASE) || echo $(BASE)); \
+	files=$$(git diff --name-only $$base HEAD | grep -E '^[^/]+\.ya?ml$$' || true); \
+	ssm=$$(echo "$$files" | xargs -I{} sh -c 'grep -q "schemaVersion" {} && grep -q "assumeRole:" {} && echo {}' || true); \
+	[ -z "$$ssm" ] && { echo "No changed SSM Automation docs."; exit 0; }; \
+	for f in $$ssm; do \
+	  echo "Validating $$f"; \
+	  aws --region $(AWS_REGION) ssm validate-document --document-type Automation --content file://"$$f" >/dev/null; \
+	done; \
+	echo "Changed SSM docs validated."
