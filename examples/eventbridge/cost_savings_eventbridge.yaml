@@ -1,0 +1,87 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Schedule the CostSavingsRemediation SSM Automation runbook via EventBridge
+
+Parameters:
+  DocumentName:
+    Type: String
+    Default: CostSavingsRemediation
+    Description: Name of the registered SSM Automation document
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 9 * * ? *) # every day at 09:00 UTC
+    Description: EventBridge schedule expression
+  AutomationAssumeRoleArn:
+    Type: String
+    Description: IAM role ARN that the Automation document will assume (AutomationAssumeRole parameter)
+  IdleDaysThreshold:
+    Type: Number
+    Default: 30
+  LowUtilizationThreshold:
+    Type: Number
+    Default: 10
+  SnapshotBeforeDelete:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+  DryRun:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+  NotificationTopicArn:
+    Type: String
+    Default: ''
+    Description: Optional SNS topic ARN for summary notifications
+
+Resources:
+  EventsInvokeAutomationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/service-role/"
+      Policies:
+        - PolicyName: InvokeAutomation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:StartAutomationExecution
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${DocumentName}:$DEFAULT
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !Ref AutomationAssumeRoleArn
+
+  CostSavingsScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cost-savings-${DocumentName}-schedule
+      Description: "Scheduled SSM Automation execution for cost savings remediation"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: StartCostSavingsAutomation
+          Arn: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${DocumentName}:$DEFAULT
+          RoleArn: !GetAtt EventsInvokeAutomationRole.Arn
+          Input: !Sub |
+            {
+              "AutomationAssumeRole": ["${AutomationAssumeRoleArn}"],
+              "IdleDaysThreshold": ["${IdleDaysThreshold}"],
+              "LowUtilizationThreshold": ["${LowUtilizationThreshold}"],
+              "SnapshotBeforeDelete": ["${SnapshotBeforeDelete}"],
+              "DryRun": ["${DryRun}"],
+              "NotificationTopicArn": ["${NotificationTopicArn}"]
+            }
+
+Outputs:
+  RuleName:
+    Value: !Ref CostSavingsScheduleRule
+    Description: EventBridge rule name
+  RoleArn:
+    Value: !GetAtt EventsInvokeAutomationRole.Arn
+    Description: Role that EventBridge assumes to start the Automation execution

@@ -49,3 +49,21 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
+
+  - repo: local
+    hooks:
+      - id: yamllint
+        name: yamllint
+        entry: yamllint -c .github/yamllint-config.yml
+        language: system
+        types: [yaml]
+      - id: ssm-policy-check
+        name: ssm-policy-check
+        entry: python scripts/ssm_policy_check.py
+        language: system
+        files: ^[^/]+\.ya?ml$
+      - id: ssm-schema-validate
+        name: ssm-schema-validate
+        entry: python scripts/validate_ssm_schema.py
+        language: system
+        files: ^[^/]+\.ya?ml$
