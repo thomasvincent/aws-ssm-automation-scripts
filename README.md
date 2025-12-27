@@ -205,6 +205,27 @@ aws ssm start-automation-execution \
   }'
 ```
 
+##### Scheduled execution (EventBridge example)
+A CloudFormation example to run this nightly is in `examples/eventbridge/cost_savings_eventbridge.yaml`.
+
+Deploy:
+
+```bash
+aws cloudformation deploy \
+  --stack-name cost-savings-schedule \
+  --template-file examples/eventbridge/cost_savings_eventbridge.yaml \
+  --parameter-overrides \
+    DocumentName=CostSavingsRemediation \
+    AutomationAssumeRoleArn=arn:aws:iam::111122223333:role/SSM-Automation-Execution-Role \
+    ScheduleExpression='cron(0 9 * * ? *)' \
+    IdleDaysThreshold=30 \
+    LowUtilizationThreshold=10 \
+    SnapshotBeforeDelete=true \
+    DryRun=true
+```
+
+Note: The EventBridge rule assumes a role that can `ssm:StartAutomationExecution` on the runbook and `iam:PassRole` for the `AutomationAssumeRole` you provide.
+
 ### IAM & Access Management
 
 #### 👤 Attach Policies to Role

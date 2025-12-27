@@ -1,0 +1,84 @@
+name: PR - Validate new/changed SSM YAML documents
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-changed:
+    name: Validate changed YAML only
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed YAML files
+        id: diff
+        run: |
+          set -euo pipefail
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          files=$(git diff --name-only "$base_sha" "$head_sha" | grep -E '\\.ya?ml$' || true)
+          echo "Changed files:\n$files"
+          # Save as newline and space separated lists
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -z "$files" ]; then echo "none=true" >> $GITHUB_OUTPUT; fi
+
+      - name: Setup Python
+        if: steps.diff.outputs.none != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install tools
+        if: steps.diff.outputs.none != 'true'
+        run: |
+          pip install --disable-pip-version-check yamllint pyyaml awscli
+
+      - name: Lint YAML
+        if: steps.diff.outputs.none != 'true'
+        run: |
+          echo "Linting changed YAML files"
+          echo "${{ steps.diff.outputs.files }}" | xargs -I{} yamllint -c .github/yamllint-config.yml {}
+
+      - name: Basic YAML parse
+        if: steps.diff.outputs.none != 'true'
+        run: |
+          set -euo pipefail
+          for f in ${{ steps.diff.outputs.files }}; do
+            echo "Validating YAML syntax for $f"
+            python - << 'PY'
+import yaml,sys
+path=sys.argv[1]
+with open(path,'r') as fh:
+    yaml.safe_load(fh)
+print(f"OK: {path}")
+PY
+            $f || exit 1
+          done
+
+      - name: Configure AWS credentials (optional)
+        id: aws-creds
+        if: steps.diff.outputs.none != 'true'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Validate with AWS SSM API
+        if: steps.diff.outputs.none != 'true' && steps.aws-creds.outcome == 'success'
+        run: |
+          set -euo pipefail
+          for f in ${{ steps.diff.outputs.files }}; do
+            echo "Validating $f with SSM API"
+            aws ssm validate-document --document-type Automation --content file://$f
+          done
