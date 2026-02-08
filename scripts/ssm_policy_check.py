@@ -5,6 +5,7 @@ from pathlib import Path
 
 errors = []
 
+
 def check_file(path: Path):
     try:
         with path.open("r") as f:
@@ -16,7 +17,11 @@ def check_file(path: Path):
         # not an SSM doc
         return
     # Only enforce if it looks like an SSM Automation doc
-    if "schemaVersion" not in doc and "assumeRole" not in doc and "mainSteps" not in doc:
+    if (
+        "schemaVersion" not in doc
+        and "assumeRole" not in doc
+        and "mainSteps" not in doc
+    ):
         return
     sv = str(doc.get("schemaVersion", "")).strip()
     ar = doc.get("assumeRole")
@@ -35,6 +40,7 @@ def main(argv):
         print("\n".join(errors))
         return 1
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
