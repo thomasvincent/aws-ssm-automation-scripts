@@ -67,3 +67,4 @@ repos:
         entry: python scripts/validate_ssm_schema.py
         language: system
         files: ^[^/]+\.ya?ml$
+        additional_dependencies: ['jsonschema', 'pyyaml']
