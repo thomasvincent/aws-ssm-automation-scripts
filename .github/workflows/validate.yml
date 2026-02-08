@@ -51,16 +51,18 @@ jobs:
           
       - name: Install dependencies
         run: |
-          pip install awscli pyyaml
-          
-      - name: Basic YAML validation
+          pip install awscli pyyaml jsonschema
+
+      - name: Basic YAML validation and schema check
         run: |
-          for file in $(find . -name "*.yaml" -not -path "*/\.*"); do
-            echo "Validating YAML syntax for $file..."
-            python -c "import yaml, json, sys; yaml.safe_load(open('$file', 'r'))" || exit 1
-            echo "$file is valid YAML"
+          for file in $(find . -name "*.yaml" -not -path "*/\.*" -not -path "*/examples/*"); do
+            if [[ "$file" =~ ^\.\/[^/]+\.yaml$ ]]; then
+              echo "Validating $file..."
+              python scripts/ssm_policy_check.py "$file" || exit 1
+              python scripts/validate_ssm_schema.py "$file" || exit 1
+            fi
           done
-          echo "All SSM documents are valid YAML"
+          echo "All SSM documents validated successfully"
           
       - name: Configure AWS credentials (optional)
         uses: aws-actions/configure-aws-credentials@v5

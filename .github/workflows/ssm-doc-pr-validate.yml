@@ -90,14 +90,19 @@ jobs:
           set -euo pipefail
           for f in ${{ steps.diff.outputs.files }}; do
             echo "Validating YAML syntax for $f"
-            python - << 'PY'
+            python - "$f" << 'PY'
 import yaml,sys
+
+class CFNLoader(yaml.SafeLoader):
+    pass
+
+CFNLoader.add_multi_constructor('!', lambda loader, suffix, node: None)
+
 path=sys.argv[1]
 with open(path,'r') as fh:
-    yaml.safe_load(fh)
+    yaml.load(fh, Loader=CFNLoader)
 print(f"OK: {path}")
 PY
-            $f || exit 1
           done
 
       - name: Policy checks for SSM Automation docs
@@ -107,13 +112,19 @@ PY
         run: |
           python - << 'PY'
 import os, sys, yaml
+
+class CFNLoader(yaml.SafeLoader):
+    pass
+
+CFNLoader.add_multi_constructor('!', lambda loader, suffix, node: None)
+
 files = (os.environ.get('SSM_FILES') or '').strip().splitlines()
 errors = []
 for f in files:
     if not f:
         continue
     with open(f, 'r') as fh:
-        doc = yaml.safe_load(fh)
+        doc = yaml.load(fh, Loader=CFNLoader)
     sv = str(doc.get('schemaVersion', '')).strip()
     ar = doc.get('assumeRole')
     if sv != '0.3':

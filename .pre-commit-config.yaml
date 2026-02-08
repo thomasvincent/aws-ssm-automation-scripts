@@ -60,11 +60,12 @@ repos:
       - id: ssm-policy-check
         name: ssm-policy-check
         entry: python scripts/ssm_policy_check.py
-        language: system
+        language: python
         files: ^[^/]+\.ya?ml$
+        additional_dependencies: ['pyyaml']
       - id: ssm-schema-validate
         name: ssm-schema-validate
         entry: python scripts/validate_ssm_schema.py
-        language: system
+        language: python
         files: ^[^/]+\.ya?ml$
         additional_dependencies: ['jsonschema', 'pyyaml']
