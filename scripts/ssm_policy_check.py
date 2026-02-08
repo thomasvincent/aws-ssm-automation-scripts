@@ -6,10 +6,19 @@ from pathlib import Path
 errors = []
 
 
+# Add CloudFormation intrinsic function support
+class CFNLoader(yaml.SafeLoader):
+    pass
+
+
+# Handle CloudFormation intrinsic functions by returning None
+CFNLoader.add_multi_constructor('!', lambda loader, suffix, node: None)
+
+
 def check_file(path: Path):
     try:
         with path.open("r") as f:
-            doc = yaml.safe_load(f)
+            doc = yaml.load(f, Loader=CFNLoader)
     except Exception as e:
         errors.append(f"{path}: YAML load error: {e}")
         return

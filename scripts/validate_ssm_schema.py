@@ -8,6 +8,15 @@ from jsonschema import Draft7Validator
 SCHEMA_PATH = Path(__file__).parent / "ssm_schema.json"
 
 
+# Add CloudFormation intrinsic function support
+class CFNLoader(yaml.SafeLoader):
+    pass
+
+
+# Handle CloudFormation intrinsic functions by returning None
+CFNLoader.add_multi_constructor('!', lambda loader, suffix, node: None)
+
+
 def load_schema():
     with open(SCHEMA_PATH, "r") as f:
         return json.load(f)
@@ -15,7 +24,7 @@ def load_schema():
 
 def validate_file(validator, path: Path):
     with path.open("r") as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, Loader=CFNLoader)
     # Only validate likely SSM Automation docs
     if not isinstance(data, dict):
         return []
