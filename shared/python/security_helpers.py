@@ -56,9 +56,7 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
         dict: Security group analysis results
     """
     if not high_risk_ports:
-        high_risk_ports = [
-            22, 3389, 5432, 3306, 1433, 27017, 6379, 9200, 8080, 8443
-        ]
+        high_risk_ports = [22, 3389, 5432, 3306, 1433, 27017, 6379, 9200, 8080, 8443]
 
     ec2 = boto3.client("ec2")
     try:
@@ -69,9 +67,7 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
             or "SecurityGroups" not in response
             or not response["SecurityGroups"]
         ):
-            logger.warning(
-                f"No security groups found with ID {security_group_id}"
-            )
+            logger.warning(f"No security groups found with ID {security_group_id}")
             return {
                 "SecurityGroupId": security_group_id,
                 "Status": "Error",
@@ -109,11 +105,7 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
                                 is_high_risk = True
                                 affected_ports.append(port)
 
-                    protocol_str = (
-                        ip_protocol.upper()
-                        if ip_protocol != "-1"
-                        else "ALL"
-                    )
+                    protocol_str = ip_protocol.upper() if ip_protocol != "-1" else "ALL"
                     port_str = (
                         str(from_port)
                         if from_port == to_port
@@ -141,9 +133,7 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
             "Status": "HasIssues" if issues else "Clean",
             "Issues": issues,
             "TotalIssues": len(issues),
-            "HighRiskIssues": len(
-                [i for i in issues if i.get("Severity") == "HIGH"]
-            ),
+            "HighRiskIssues": len([i for i in issues if i.get("Severity") == "HIGH"]),
         }
 
     except ClientError as e:
@@ -239,10 +229,7 @@ def check_s3_bucket_encryption(bucket_name):
     try:
         response = s3.get_bucket_encryption(Bucket=bucket_name)
 
-        rules = (
-            response.get("ServerSideEncryptionConfiguration", {})
-            .get("Rules", [])
-        )
+        rules = response.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
 
         if not rules:
             return {
@@ -281,9 +268,7 @@ def check_s3_bucket_encryption(bucket_name):
                 "Message": "No encryption configuration found",
             }
         else:
-            logger.error(
-                f"Error checking S3 bucket encryption {bucket_name}: {e}"
-            )
+            logger.error(f"Error checking S3 bucket encryption {bucket_name}: {e}")
             return {
                 "BucketName": bucket_name,
                 "Status": "Error",
@@ -305,11 +290,7 @@ def check_ebs_volume_encryption(volume_id):
     try:
         response = ec2.describe_volumes(VolumeIds=[volume_id])
 
-        if (
-            not response
-            or "Volumes" not in response
-            or not response["Volumes"]
-        ):
+        if not response or "Volumes" not in response or not response["Volumes"]:
             logger.warning(f"No volume found with ID {volume_id}")
             return {
                 "VolumeId": volume_id,
@@ -360,9 +341,9 @@ def enable_s3_bucket_encryption(bucket_name, kms_key_id=None):
 
         # Add KMS key if provided
         if kms_key_id:
-            encryption_config["Rules"][0][
-                "ApplyServerSideEncryptionByDefault"
-            ]["KMSMasterKeyID"] = kms_key_id
+            encryption_config["Rules"][0]["ApplyServerSideEncryptionByDefault"][
+                "KMSMasterKeyID"
+            ] = kms_key_id
 
         s3.put_bucket_encryption(
             Bucket=bucket_name,
@@ -377,9 +358,7 @@ def enable_s3_bucket_encryption(bucket_name, kms_key_id=None):
         }
 
     except ClientError as e:
-        logger.error(
-            f"Error enabling S3 bucket encryption for {bucket_name}: {e}"
-        )
+        logger.error(f"Error enabling S3 bucket encryption for {bucket_name}: {e}")
         return {
             "BucketName": bucket_name,
             "Status": "Error",
@@ -569,11 +548,7 @@ def check_cloudtrail_status():
                     "KmsEncryption": has_kms,
                     "Status": (
                         "Healthy"
-                        if (
-                            is_logging
-                            and is_multi_region
-                            and log_file_validation
-                        )
+                        if (is_logging and is_multi_region and log_file_validation)
                         else "Suboptimal"
                     ),
                 }

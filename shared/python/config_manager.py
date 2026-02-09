@@ -56,9 +56,7 @@ class ConfigManager:
         """
         try:
             ssm = self._get_client("ssm")
-            response = ssm.get_parameter(
-                Name=parameter_path, WithDecryption=True
-            )
+            response = ssm.get_parameter(Name=parameter_path, WithDecryption=True)
 
             parameter_value = response["Parameter"]["Value"]
 
@@ -125,18 +123,14 @@ class ConfigManager:
                 and "bucket" in identifier
                 and "key" in identifier
             ):
-                return self.get_s3_config(
-                    identifier["bucket"], identifier["key"]
-                )
+                return self.get_s3_config(identifier["bucket"], identifier["key"])
             else:
                 raise ValueError(
                     "For s3 source, identifier must be a dict with "
                     "'bucket' and 'key'"
                 )
         else:
-            raise ValueError(
-                f"Unsupported config source: {self.config_source}"
-            )
+            raise ValueError(f"Unsupported config source: {self.config_source}")
 
     def put_parameter_store_config(
         self,
@@ -178,9 +172,7 @@ class ConfigManager:
                 params["Description"] = description
 
             ssm.put_parameter(**params)
-            logger.info(
-                f"Successfully stored configuration at {parameter_path}"
-            )
+            logger.info(f"Successfully stored configuration at {parameter_path}")
             return True
 
         except ClientError as e:
@@ -219,9 +211,7 @@ class ConfigManager:
                 ),
             )
 
-            logger.info(
-                f"Successfully stored configuration at s3://{bucket}/{key}"
-            )
+            logger.info(f"Successfully stored configuration at s3://{bucket}/{key}")
             return True
 
         except ClientError as e:
@@ -264,6 +254,4 @@ class ConfigManager:
                     "'bucket' and 'key'"
                 )
         else:
-            raise ValueError(
-                f"Unsupported config source: {self.config_source}"
-            )
+            raise ValueError(f"Unsupported config source: {self.config_source}")
