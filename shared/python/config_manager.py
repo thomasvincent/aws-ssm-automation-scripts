@@ -5,9 +5,10 @@
 Configuration management for SSM automation documents.
 """
 
-import boto3
 import json
 import logging
+
+import boto3
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger("aws_ssm_automation")
@@ -24,7 +25,8 @@ class ConfigManager:
         Initialize the configuration manager.
 
         Args:
-            config_source (str): Source of configuration ('parameter_store' or 's3')
+            config_source (str): Source of configuration
+                ('parameter_store' or 's3')
             region (str): AWS region
         """
         self.config_source = config_source
@@ -54,7 +56,9 @@ class ConfigManager:
         """
         try:
             ssm = self._get_client("ssm")
-            response = ssm.get_parameter(Name=parameter_path, WithDecryption=True)
+            response = ssm.get_parameter(
+                Name=parameter_path, WithDecryption=True
+            )
 
             parameter_value = response["Parameter"]["Value"]
 
@@ -121,16 +125,25 @@ class ConfigManager:
                 and "bucket" in identifier
                 and "key" in identifier
             ):
-                return self.get_s3_config(identifier["bucket"], identifier["key"])
+                return self.get_s3_config(
+                    identifier["bucket"], identifier["key"]
+                )
             else:
                 raise ValueError(
-                    "For s3 source, identifier must be a dict with 'bucket' and 'key'"
+                    "For s3 source, identifier must be a dict with "
+                    "'bucket' and 'key'"
                 )
         else:
-            raise ValueError(f"Unsupported config source: {self.config_source}")
+            raise ValueError(
+                f"Unsupported config source: {self.config_source}"
+            )
 
     def put_parameter_store_config(
-        self, parameter_path, config_value, parameter_type="String", description=None
+        self,
+        parameter_path,
+        config_value,
+        parameter_type="String",
+        description=None,
     ):
         """
         Store configuration in SSM Parameter Store.
@@ -138,7 +151,8 @@ class ConfigManager:
         Args:
             parameter_path (str): Path to the parameter
             config_value (dict or str): Configuration value
-            parameter_type (str): Parameter type ('String', 'StringList', or 'SecureString')
+            parameter_type (str): Parameter type
+                ('String', 'StringList', or 'SecureString')
             description (str): Optional description
 
         Returns:
@@ -164,7 +178,9 @@ class ConfigManager:
                 params["Description"] = description
 
             ssm.put_parameter(**params)
-            logger.info(f"Successfully stored configuration at {parameter_path}")
+            logger.info(
+                f"Successfully stored configuration at {parameter_path}"
+            )
             return True
 
         except ClientError as e:
@@ -196,12 +212,16 @@ class ConfigManager:
                 Bucket=bucket,
                 Key=key,
                 Body=content.encode("utf-8"),
-                ContentType="application/json"
-                if isinstance(config_value, dict)
-                else "text/plain",
+                ContentType=(
+                    "application/json"
+                    if isinstance(config_value, dict)
+                    else "text/plain"
+                ),
             )
 
-            logger.info(f"Successfully stored configuration at s3://{bucket}/{key}")
+            logger.info(
+                f"Successfully stored configuration at s3://{bucket}/{key}"
+            )
             return True
 
         except ClientError as e:
@@ -240,7 +260,10 @@ class ConfigManager:
                 )
             else:
                 raise ValueError(
-                    "For s3 source, identifier must be a dict with 'bucket' and 'key'"
+                    "For s3 source, identifier must be a dict with "
+                    "'bucket' and 'key'"
                 )
         else:
-            raise ValueError(f"Unsupported config source: {self.config_source}")
+            raise ValueError(
+                f"Unsupported config source: {self.config_source}"
+            )

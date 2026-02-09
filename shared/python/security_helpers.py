@@ -5,9 +5,10 @@
 Security helpers for SSM automation documents.
 """
 
-import boto3
-import logging
 import ipaddress
+import logging
+
+import boto3
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger("aws_ssm_automation")
@@ -48,13 +49,16 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
 
     Args:
         security_group_id (str): Security group ID to check
-        high_risk_ports (list): List of high-risk ports to check for public access
+        high_risk_ports (list): List of high-risk ports to check for
+            public access
 
     Returns:
         dict: Security group analysis results
     """
     if not high_risk_ports:
-        high_risk_ports = [22, 3389, 5432, 3306, 1433, 27017, 6379, 9200, 8080, 8443]
+        high_risk_ports = [
+            22, 3389, 5432, 3306, 1433, 27017, 6379, 9200, 8080, 8443
+        ]
 
     ec2 = boto3.client("ec2")
     try:
@@ -65,7 +69,9 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
             or "SecurityGroups" not in response
             or not response["SecurityGroups"]
         ):
-            logger.warning(f"No security groups found with ID {security_group_id}")
+            logger.warning(
+                f"No security groups found with ID {security_group_id}"
+            )
             return {
                 "SecurityGroupId": security_group_id,
                 "Status": "Error",
@@ -103,6 +109,16 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
                                 is_high_risk = True
                                 affected_ports.append(port)
 
+                    protocol_str = (
+                        ip_protocol.upper()
+                        if ip_protocol != "-1"
+                        else "ALL"
+                    )
+                    port_str = (
+                        str(from_port)
+                        if from_port == to_port
+                        else f"{from_port}-{to_port}"
+                    )
                     issue = {
                         "Type": "PublicAccess",
                         "Severity": "HIGH" if is_high_risk else "MEDIUM",
@@ -111,8 +127,10 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
                         "IpProtocol": ip_protocol,
                         "Cidr": cidr,
                         "AffectedPorts": affected_ports,
-                        "Description": f"Public access ({cidr}) allowed to {ip_protocol.upper() if ip_protocol != '-1' else 'ALL'} "
-                        f"port(s) {from_port if from_port == to_port else f'{from_port}-{to_port}'}",
+                        "Description": (
+                            f"Public access ({cidr}) allowed to "
+                            f"{protocol_str} port(s) {port_str}"
+                        ),
                     }
                     issues.append(issue)
 
@@ -123,7 +141,9 @@ def check_security_group_rules(security_group_id, high_risk_ports=None):
             "Status": "HasIssues" if issues else "Clean",
             "Issues": issues,
             "TotalIssues": len(issues),
-            "HighRiskIssues": len([i for i in issues if i.get("Severity") == "HIGH"]),
+            "HighRiskIssues": len(
+                [i for i in issues if i.get("Severity") == "HIGH"]
+            ),
         }
 
     except ClientError as e:
@@ -191,14 +211,17 @@ def remediate_security_group_issues(security_group_id, issues):
 
     return {
         "SecurityGroupId": security_group_id,
-        "Status": "Remediated"
-        if remediated_issues and not failed_remediations
-        else "PartiallyRemediated"
-        if remediated_issues
-        else "Failed",
+        "Status": (
+            "Remediated"
+            if remediated_issues and not failed_remediations
+            else "PartiallyRemediated" if remediated_issues else "Failed"
+        ),
         "RemediatedIssues": len(remediated_issues),
         "FailedRemediations": len(failed_remediations),
-        "Details": {"Remediated": remediated_issues, "Failed": failed_remediations},
+        "Details": {
+            "Remediated": remediated_issues,
+            "Failed": failed_remediations,
+        },
     }
 
 
@@ -216,7 +239,10 @@ def check_s3_bucket_encryption(bucket_name):
     try:
         response = s3.get_bucket_encryption(Bucket=bucket_name)
 
-        rules = response.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+        rules = (
+            response.get("ServerSideEncryptionConfiguration", {})
+            .get("Rules", [])
+        )
 
         if not rules:
             return {
@@ -255,8 +281,14 @@ def check_s3_bucket_encryption(bucket_name):
                 "Message": "No encryption configuration found",
             }
         else:
-            logger.error(f"Error checking S3 bucket encryption {bucket_name}: {e}")
-            return {"BucketName": bucket_name, "Status": "Error", "Error": str(e)}
+            logger.error(
+                f"Error checking S3 bucket encryption {bucket_name}: {e}"
+            )
+            return {
+                "BucketName": bucket_name,
+                "Status": "Error",
+                "Error": str(e),
+            }
 
 
 def check_ebs_volume_encryption(volume_id):
@@ -273,7 +305,11 @@ def check_ebs_volume_encryption(volume_id):
     try:
         response = ec2.describe_volumes(VolumeIds=[volume_id])
 
-        if not response or "Volumes" not in response or not response["Volumes"]:
+        if (
+            not response
+            or "Volumes" not in response
+            or not response["Volumes"]
+        ):
             logger.warning(f"No volume found with ID {volume_id}")
             return {
                 "VolumeId": volume_id,
@@ -324,12 +360,13 @@ def enable_s3_bucket_encryption(bucket_name, kms_key_id=None):
 
         # Add KMS key if provided
         if kms_key_id:
-            encryption_config["Rules"][0]["ApplyServerSideEncryptionByDefault"][
-                "KMSMasterKeyID"
-            ] = kms_key_id
+            encryption_config["Rules"][0][
+                "ApplyServerSideEncryptionByDefault"
+            ]["KMSMasterKeyID"] = kms_key_id
 
         s3.put_bucket_encryption(
-            Bucket=bucket_name, ServerSideEncryptionConfiguration=encryption_config
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration=encryption_config,
         )
 
         return {
@@ -340,8 +377,14 @@ def enable_s3_bucket_encryption(bucket_name, kms_key_id=None):
         }
 
     except ClientError as e:
-        logger.error(f"Error enabling S3 bucket encryption for {bucket_name}: {e}")
-        return {"BucketName": bucket_name, "Status": "Error", "Error": str(e)}
+        logger.error(
+            f"Error enabling S3 bucket encryption for {bucket_name}: {e}"
+        )
+        return {
+            "BucketName": bucket_name,
+            "Status": "Error",
+            "Error": str(e),
+        }
 
 
 def check_iam_password_policy():
@@ -375,9 +418,11 @@ def check_iam_password_policy():
 
             if key == "MinimumPasswordLength":
                 compliance[key] = {
-                    "Status": "Compliant"
-                    if current_value and current_value >= recommended_value
-                    else "NonCompliant",
+                    "Status": (
+                        "Compliant"
+                        if current_value and current_value >= recommended_value
+                        else "NonCompliant"
+                    ),
                     "CurrentValue": current_value,
                     "RecommendedValue": recommended_value,
                 }
@@ -394,17 +439,21 @@ def check_iam_password_policy():
                 }
             elif key == "PasswordReusePrevention":
                 compliance[key] = {
-                    "Status": "Compliant"
-                    if current_value and current_value >= recommended_value
-                    else "NonCompliant",
+                    "Status": (
+                        "Compliant"
+                        if current_value and current_value >= recommended_value
+                        else "NonCompliant"
+                    ),
                     "CurrentValue": current_value,
                     "RecommendedValue": recommended_value,
                 }
             elif key == "MaxPasswordAge":
                 compliance[key] = {
-                    "Status": "Compliant"
-                    if current_value and current_value <= recommended_value
-                    else "NonCompliant",
+                    "Status": (
+                        "Compliant"
+                        if current_value and current_value <= recommended_value
+                        else "NonCompliant"
+                    ),
                     "CurrentValue": current_value,
                     "RecommendedValue": recommended_value,
                 }
@@ -419,11 +468,15 @@ def check_iam_password_policy():
         )
 
         return {
-            "Status": "Compliant"
-            if compliance_percentage == 100
-            else "PartiallyCompliant"
-            if compliance_percentage > 0
-            else "NonCompliant",
+            "Status": (
+                "Compliant"
+                if compliance_percentage == 100
+                else (
+                    "PartiallyCompliant"
+                    if compliance_percentage > 0
+                    else "NonCompliant"
+                )
+            ),
             "CompliancePercentage": compliance_percentage,
             "ComplianceDetails": compliance,
             "CurrentPolicy": policy,
@@ -482,7 +535,10 @@ def check_cloudtrail_status():
         trails = response.get("trailList", [])
 
         if not trails:
-            return {"Status": "NotConfigured", "Message": "No CloudTrail trails found"}
+            return {
+                "Status": "NotConfigured",
+                "Message": "No CloudTrail trails found",
+            }
 
         trail_details = []
 
@@ -511,9 +567,15 @@ def check_cloudtrail_status():
                     "LogFileValidation": log_file_validation,
                     "IsOrganizationTrail": is_organization_trail,
                     "KmsEncryption": has_kms,
-                    "Status": "Healthy"
-                    if is_logging and is_multi_region and log_file_validation
-                    else "Suboptimal",
+                    "Status": (
+                        "Healthy"
+                        if (
+                            is_logging
+                            and is_multi_region
+                            and log_file_validation
+                        )
+                        else "Suboptimal"
+                    ),
                 }
             )
 
@@ -522,11 +584,11 @@ def check_cloudtrail_status():
         multi_region_trails = [t for t in trail_details if t["IsMultiRegion"]]
 
         return {
-            "Status": "Healthy"
-            if healthy_trails
-            else "Suboptimal"
-            if trails
-            else "NotConfigured",
+            "Status": (
+                "Healthy"
+                if healthy_trails
+                else "Suboptimal" if trails else "NotConfigured"
+            ),
             "TrailCount": len(trails),
             "HealthyTrailCount": len(healthy_trails),
             "MultiRegionTrailCount": len(multi_region_trails),

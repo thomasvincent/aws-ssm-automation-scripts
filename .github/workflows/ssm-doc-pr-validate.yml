@@ -23,8 +23,9 @@ jobs:
           set -euo pipefail
           base_sha="${{ github.event.pull_request.base.sha }}"
           head_sha="${{ github.event.pull_request.head.sha }}"
-          files=$(git diff --name-only "$base_sha" "$head_sha" | grep -E '\\.(ya?ml)$' || true)
-          echo "Changed YAML files:\n$files"
+          files=$(git diff --name-only "$base_sha" "$head_sha" | grep -E '\.(ya?ml)$' || true)
+          echo "Changed YAML files:"
+          echo "$files"
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -55,7 +56,8 @@ jobs:
               fi
             fi
           done
-          echo -e "SSM candidate files:\n$ssm_files"
+          echo "SSM candidate files:"
+          echo -e "$ssm_files"
           echo "ssm_files<<EOF" >> $GITHUB_OUTPUT
           echo -e "$ssm_files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT

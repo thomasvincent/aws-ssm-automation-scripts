@@ -3,10 +3,11 @@
 
 """Shared AWS helper functions for SSM automation documents."""
 
+import logging
+from datetime import datetime
+
 import boto3
 from botocore.exceptions import ClientError
-from datetime import datetime
-import logging
 
 logger = logging.getLogger("aws_ssm_automation")
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import sys
-import yaml
 from pathlib import Path
+
+import yaml
 
 errors = []
 
@@ -12,13 +13,13 @@ class CFNLoader(yaml.SafeLoader):
 
 
 # Handle CloudFormation intrinsic functions by returning None
-CFNLoader.add_multi_constructor('!', lambda loader, suffix, node: None)
+CFNLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
 
 
 def check_file(path: Path):
     try:
         with path.open("r") as f:
-            doc = yaml.load(f, Loader=CFNLoader)
+            doc = yaml.load(f, Loader=CFNLoader)  # nosec B506
     except Exception as e:
         errors.append(f"{path}: YAML load error: {e}")
         return

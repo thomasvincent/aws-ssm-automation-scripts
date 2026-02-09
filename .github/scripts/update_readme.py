@@ -5,9 +5,10 @@ Script to automatically update the README.md file with script documentation.
 
 import os
 import re
-import yaml
-from glob import glob
 from collections import defaultdict
+from glob import glob
+
+import yaml
 
 # Script categories mapping
 CATEGORIES = {
