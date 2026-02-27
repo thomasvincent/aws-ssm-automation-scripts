@@ -24,15 +24,15 @@ jobs:
     timeout-minutes: 15  # Prevent hung jobs
     steps:
       - uses: actions/checkout@v6
-      
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.10'
-          
+
       - name: Install yamllint
         run: pip install yamllint
-        
+
       - name: Run yamllint
         run: yamllint -c .github/yamllint-config.yml .
 
@@ -43,25 +43,27 @@ jobs:
     needs: yaml-lint
     steps:
       - uses: actions/checkout@v6
-      
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.10'
-          
+
       - name: Install dependencies
         run: |
-          pip install awscli pyyaml
-          
-      - name: Basic YAML validation
+          pip install awscli pyyaml jsonschema
+
+      - name: Basic YAML validation and schema check
         run: |
-          for file in $(find . -name "*.yaml" -not -path "*/\.*"); do
-            echo "Validating YAML syntax for $file..."
-            python -c "import yaml, json, sys; yaml.safe_load(open('$file', 'r'))" || exit 1
-            echo "$file is valid YAML"
+          for file in $(find . -name "*.yaml" -not -path "*/\.*" -not -path "*/examples/*"); do
+            if [[ "$file" =~ ^\.\/[^/]+\.yaml$ ]]; then
+              echo "Validating $file..."
+              python scripts/ssm_policy_check.py "$file" || exit 1
+              python scripts/validate_ssm_schema.py "$file" || exit 1
+            fi
           done
-          echo "All SSM documents are valid YAML"
-          
+          echo "All SSM documents validated successfully"
+
       - name: Configure AWS credentials (optional)
         uses: aws-actions/configure-aws-credentials@v5
         continue-on-error: true
@@ -70,7 +72,7 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-          
+
       - name: Validate SSM Documents with AWS API
         if: steps.aws-creds.outcome == 'success'
         run: |

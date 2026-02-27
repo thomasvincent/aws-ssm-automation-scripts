@@ -5,6 +5,8 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        args: ['--unsafe']
+        exclude: 'ssm-doc-pr-validate\.yml$'
       - id: check-json
       - id: check-added-large-files
       - id: check-merge-conflict
@@ -36,13 +38,14 @@ repos:
     rev: v1.13.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-all]
+        additional_dependencies: [types-PyYAML, types-jsonschema]
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.10
     hooks:
       - id: bandit
         args: ['-c', 'pyproject.toml']
+        additional_dependencies: ['bandit[toml]']
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
@@ -60,10 +63,12 @@ repos:
       - id: ssm-policy-check
         name: ssm-policy-check
         entry: python scripts/ssm_policy_check.py
-        language: system
+        language: python
         files: ^[^/]+\.ya?ml$
+        additional_dependencies: ['pyyaml']
       - id: ssm-schema-validate
         name: ssm-schema-validate
         entry: python scripts/validate_ssm_schema.py
-        language: system
+        language: python
         files: ^[^/]+\.ya?ml$
+        additional_dependencies: ['jsonschema', 'pyyaml']

@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 import sys
-import yaml
 from pathlib import Path
 
+import yaml
+
 errors = []
+
+
+# Add CloudFormation intrinsic function support
+class CFNLoader(yaml.SafeLoader):
+    pass
+
+
+# Handle CloudFormation intrinsic functions by returning None
+CFNLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
+
 
 def check_file(path: Path):
     try:
         with path.open("r") as f:
-            doc = yaml.safe_load(f)
+            doc = yaml.load(f, Loader=CFNLoader)  # nosec B506
     except Exception as e:
         errors.append(f"{path}: YAML load error: {e}")
         return
@@ -16,7 +27,11 @@ def check_file(path: Path):
         # not an SSM doc
         return
     # Only enforce if it looks like an SSM Automation doc
-    if "schemaVersion" not in doc and "assumeRole" not in doc and "mainSteps" not in doc:
+    if (
+        "schemaVersion" not in doc
+        and "assumeRole" not in doc
+        and "mainSteps" not in doc
+    ):
         return
     sv = str(doc.get("schemaVersion", "")).strip()
     ar = doc.get("assumeRole")
@@ -35,6 +50,7 @@ def main(argv):
         print("\n".join(errors))
         return 1
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

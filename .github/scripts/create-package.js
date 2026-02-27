@@ -58,7 +58,7 @@ try {
   const yamlFiles = fs.readdirSync(process.cwd())
     .filter(file => file.endsWith('.yaml'))
     .map(file => file);
-  
+
   // Build zip command
   const filesToZip = [
     ...yamlFiles,
@@ -67,11 +67,11 @@ try {
     'MANIFEST.json',
     'shared'
   ].join(' ');
-  
+
   // Create zip archive
   execSync(`zip -r "${zipFile}" ${filesToZip}`, { stdio: 'inherit' });
   console.log(`Package created: ${zipFile}`);
-  
+
   // Clean up manifest file
   fs.unlinkSync(manifestPath);
 } catch (error) {
